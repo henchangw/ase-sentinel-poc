@@ -223,7 +223,7 @@ Use the same resource group and name prefix so Bicep updates the existing Logic 
 
 On success the comment contains `Blocked IP: <address>`, the rule name, the policy id, the list size, rejected addresses, and the Logic App run name. The rule is:
 
-- Application Gateway: custom rule array, `matchVariables.variableName = RemoteAddr`, `matchValues`, `negationCondition = false`, action Block, state Enabled
+- Application Gateway: custom rule array, `matchVariables.variableName = RemoteAddr`, `matchValues`, `negationConditon = false`, action Block, state Enabled. API version `2024-05-01` rejects the spelling `negationCondition`.
 - Front Door: `customRules.rules`, `matchVariable = RemoteAddr`, `matchValue`, `negateCondition = false`, `enabledState = Enabled`, action Block, and the sku echoed from the GET
 
 Other custom rules, including `PocSimulatedProbe`, are copied onto the PUT. The Application Gateway PUT does not send `applicationGateways`, `httpListeners`, `pathBasedRules`, or `provisioningState`.

@@ -1115,7 +1115,7 @@
                             }
                           ],
                           "operator": "IPMatch",
-                          "negationCondition": false,
+                          "negationConditon": false,
                           "matchValues": "@outputs('Compose_merged_addresses')",
                           "transforms": []
                         }

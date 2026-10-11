@@ -9,3 +9,5 @@ Application Gateway and Front Door use different custom-rule JSON. A provider va
 The system-assigned identity needs Microsoft Sentinel Responder on the workspace resource group and Network Contributor on the one WAF policy. Both assignments are in the Bicep modules.
 
 Empty arrays in the workflow use `json('[]')`. `createArray()` with no arguments is rejected by the Logic Apps runtime, including on the first dry-run when `SentinelAutoBlock` does not exist yet.
+
+The Application Gateway match condition uses the ARM property `negationConditon`. That spelling is what API version `2024-05-01` accepts. `negationCondition` makes the policy PUT return InvalidJson. Front Door uses `negateCondition`.
