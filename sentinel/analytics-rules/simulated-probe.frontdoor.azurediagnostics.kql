@@ -1,0 +1,27 @@
+// Front Door WAF when the diagnostic destination is AzureDiagnostics.
+// Microsoft documents this category in AzureDiagnostics. Use this query unless
+// ASE confirms a resource-specific table in the chosen workspace.
+// Tokens: __THRESHOLD__ __LOOKBACK__ __BLOCK_RULE__ __PROBE_RULE__ __PROBE_MARKER__ __WATCHLIST__ __OVERRIDE_PROTECTED__
+let Threshold = __THRESHOLD__;
+let OverrideProtected = __OVERRIDE_PROTECTED__;
+let BlockRuleName = "__BLOCK_RULE__";
+let ProbeRuleName = "__PROBE_RULE__";
+let ProbeMarker = "__PROBE_MARKER__";
+let BuiltInProtected = dynamic(["0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "169.254.169.254/32", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]);
+let WatchlistRanges = coalesce(toscalar(_GetWatchlist('__WATCHLIST__') | where isnotempty(IPAddress) | summarize make_list(tostring(IPAddress))), dynamic([]));
+AzureDiagnostics
+| where TimeGenerated > ago(__LOOKBACK__)
+| where Category == "FrontDoorWebApplicationFirewallLog"
+| extend ClientIp = column_ifexists("clientIP_s", column_ifexists("ClientIP", "")), Action = column_ifexists("action_s", column_ifexists("Action", "")), RuleName = column_ifexists("ruleName_s", column_ifexists("RuleName", "")), RequestUri = column_ifexists("requestUri_s", column_ifexists("RequestUri", "")), HostName = column_ifexists("host_s", column_ifexists("Host", "")), Message = column_ifexists("details_msg_s", "")
+| where Action =~ "Block" or Action =~ "Log"
+| where RuleName != BlockRuleName
+| where RuleName == ProbeRuleName or RequestUri has ProbeMarker
+| where isnotempty(ClientIp)
+| where not(ClientIp has ":")
+| where OverrideProtected or not(ipv4_is_private(ClientIp))
+| where OverrideProtected or not(ipv4_is_in_any_range(ClientIp, BuiltInProtected))
+| where OverrideProtected or not(ipv4_is_in_any_range(ClientIp, WatchlistRanges))
+| summarize EventCount = dcount(TimeGenerated), RuleIds = make_set(RuleName, 20), Messages = make_set(Message, 10), RequestUris = make_set(RequestUri, 10), Hostnames = make_set(HostName, 5), Actions = make_set(Action, 4), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by ClientIp
+| where EventCount >= Threshold
+| extend EventCountText = tostring(EventCount), RuleIdList = strcat_array(RuleIds, ", "), MessageList = strcat_array(Messages, " | "), RequestUriList = strcat_array(RequestUris, ", "), HostnameList = strcat_array(Hostnames, ", "), ActionList = strcat_array(Actions, ", "), FirstSeenText = tostring(FirstSeen), LastSeenText = tostring(LastSeen), ProbeMarkerText = ProbeMarker
+| project ClientIp, EventCountText, RuleIdList, MessageList, RequestUriList, HostnameList, ActionList, FirstSeenText, LastSeenText, ProbeMarkerText

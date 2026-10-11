@@ -1,0 +1,9 @@
+// Confirms the POC diagnostic path for Application Gateway.
+// Rows appear only after the Dedicated diagnostic setting has received a probe.
+// Table AGWFirewallLogs is the table that setting writes. It is not a guess.
+AGWFirewallLogs
+| where TimeGenerated > ago(2h)
+| where RuleId == "PocSimulatedProbe" or RequestUri has "ase-poc-probe" or RuleId == "SentinelAutoBlock"
+| project TimeGenerated, ClientIp, Action, RuleId, Message, RequestUri, Hostname, TransactionId
+| order by TimeGenerated desc
+| take 50

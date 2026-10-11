@@ -1,0 +1,27 @@
+// Deployed only with the Application Gateway POC.
+// Diagnostic setting logAnalyticsDestinationType = Dedicated and category
+// ApplicationGatewayFirewallLog. That setting writes AGWFirewallLogs.
+// This file is not used for Front Door. See the Front Door query files.
+// Tokens: __THRESHOLD__ __LOOKBACK__ __BLOCK_RULE__ __PROBE_RULE__ __PROBE_MARKER__ __WATCHLIST__ __OVERRIDE_PROTECTED__
+let Threshold = __THRESHOLD__;
+let OverrideProtected = __OVERRIDE_PROTECTED__;
+let BlockRuleName = "__BLOCK_RULE__";
+let ProbeRuleName = "__PROBE_RULE__";
+let ProbeMarker = "__PROBE_MARKER__";
+let BuiltInProtected = dynamic(["0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "169.254.169.254/32", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]);
+let WatchlistRanges = coalesce(toscalar(_GetWatchlist('__WATCHLIST__') | where isnotempty(IPAddress) | summarize make_list(tostring(IPAddress))), dynamic([]));
+AGWFirewallLogs
+| where TimeGenerated > ago(__LOOKBACK__)
+| where Action == "Blocked" or Action == "Detected"
+| where RuleId != BlockRuleName
+| where RuleId == ProbeRuleName or RequestUri has ProbeMarker
+| extend ClientIp = tostring(ClientIp)
+| where isnotempty(ClientIp)
+| where not(ClientIp has ":")
+| where OverrideProtected or not(ipv4_is_private(ClientIp))
+| where OverrideProtected or not(ipv4_is_in_any_range(ClientIp, BuiltInProtected))
+| where OverrideProtected or not(ipv4_is_in_any_range(ClientIp, WatchlistRanges))
+| summarize EventCount = dcount(TransactionId), RuleIds = make_set(RuleId, 20), Messages = make_set(Message, 10), RequestUris = make_set(RequestUri, 10), Hostnames = make_set(Hostname, 5), Actions = make_set(Action, 4), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by ClientIp
+| where EventCount >= Threshold
+| extend EventCountText = tostring(EventCount), RuleIdList = strcat_array(RuleIds, ", "), MessageList = strcat_array(Messages, " | "), RequestUriList = strcat_array(RequestUris, ", "), HostnameList = strcat_array(Hostnames, ", "), ActionList = strcat_array(Actions, ", "), FirstSeenText = tostring(FirstSeen), LastSeenText = tostring(LastSeen), ProbeMarkerText = ProbeMarker
+| project ClientIp, EventCountText, RuleIdList, MessageList, RequestUriList, HostnameList, ActionList, FirstSeenText, LastSeenText, ProbeMarkerText

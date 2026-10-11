@@ -1,0 +1,10 @@
+// Front Door WAF rows in the AzureDiagnostics destination Microsoft documents
+// for category FrontDoorWebApplicationFirewallLog.
+AzureDiagnostics
+| where TimeGenerated > ago(2h)
+| where Category == "FrontDoorWebApplicationFirewallLog"
+| extend ClientIp = column_ifexists("clientIP_s", ""), Action = column_ifexists("action_s", ""), RuleName = column_ifexists("ruleName_s", ""), RequestUri = column_ifexists("requestUri_s", "")
+| where RuleName == "PocSimulatedProbe" or RequestUri has "ase-poc-probe" or RuleName == "SentinelAutoBlock"
+| project TimeGenerated, ClientIp, Action, RuleName, RequestUri
+| order by TimeGenerated desc
+| take 50

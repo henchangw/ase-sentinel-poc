@@ -1,0 +1,1319 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "defaultValue": {},
+      "type": "Object"
+    },
+    "wafPolicyResourceId": {
+      "defaultValue": "",
+      "type": "String"
+    },
+    "wafProvider": {
+      "defaultValue": "ApplicationGateway",
+      "type": "String"
+    },
+    "protectedIpRanges": {
+      "defaultValue": [],
+      "type": "Array"
+    },
+    "maximumBlockEntries": {
+      "defaultValue": 100,
+      "type": "Int"
+    },
+    "autoBlockEnabled": {
+      "defaultValue": false,
+      "type": "Bool"
+    },
+    "overrideProtectedRanges": {
+      "defaultValue": false,
+      "type": "Bool"
+    },
+    "blockRuleName": {
+      "defaultValue": "SentinelAutoBlock",
+      "type": "String"
+    },
+    "blockRulePriority": {
+      "defaultValue": 10,
+      "type": "Int"
+    },
+    "armApiVersion": {
+      "defaultValue": "2024-05-01",
+      "type": "String"
+    }
+  },
+  "triggers": {
+    "Microsoft_Sentinel_incident": {
+      "type": "ApiConnectionWebhook",
+      "inputs": {
+        "body": {
+          "callback_url": "@{listCallbackUrl()}"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "path": "/incident-creation"
+      }
+    }
+  },
+  "actions": {
+    "Entities_-_Get_IPs": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/entities/ip"
+      },
+      "runAfter": {}
+    },
+    "Add_comment_-_entities_failed": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "<p><strong>ASE POC playbook failed before it evaluated an IP.</strong> The WAF policy was not changed. The Sentinel connector did not return IP entities for incident @{coalesce(triggerBody()?['object']?['properties']?['incidentNumber'], '')}.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/Incidents/Comment"
+      },
+      "runAfter": {
+        "Entities_-_Get_IPs": [
+          "Failed",
+          "TimedOut"
+        ]
+      }
+    },
+    "Initialize_candidates": {
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          {
+            "name": "candidates",
+            "type": "array",
+            "value": []
+          }
+        ]
+      },
+      "runAfter": {
+        "Entities_-_Get_IPs": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Initialize_rejected": {
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          {
+            "name": "rejected",
+            "type": "array",
+            "value": []
+          }
+        ]
+      },
+      "runAfter": {
+        "Entities_-_Get_IPs": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Filter_unsupported_ranges": {
+      "type": "Query",
+      "inputs": {
+        "from": "@parameters('protectedIpRanges')",
+        "where": "@not(and(not(empty(item())),not(contains(item(), ':')),not(contains(item(), ' ')),not(contains(item(), ',')),equals(length(split(first(split(item(), '/')), '.')), 4),greaterOrEquals(int(split(first(split(item(), '/')), '.')[0]), 0),lessOrEquals(int(split(first(split(item(), '/')), '.')[0]), 255),greaterOrEquals(int(split(first(split(item(), '/')), '.')[1]), 0),lessOrEquals(int(split(first(split(item(), '/')), '.')[1]), 255),greaterOrEquals(int(split(first(split(item(), '/')), '.')[2]), 0),lessOrEquals(int(split(first(split(item(), '/')), '.')[2]), 255),greaterOrEquals(int(split(first(split(item(), '/')), '.')[3]), 0),lessOrEquals(int(split(first(split(item(), '/')), '.')[3]), 255),equals(string(int(split(first(split(item(), '/')), '.')[0])), split(first(split(item(), '/')), '.')[0]),equals(string(int(split(first(split(item(), '/')), '.')[1])), split(first(split(item(), '/')), '.')[1]),equals(string(int(split(first(split(item(), '/')), '.')[2])), split(first(split(item(), '/')), '.')[2]),equals(string(int(split(first(split(item(), '/')), '.')[3])), split(first(split(item(), '/')), '.')[3]),or(and(not(contains(item(), '/')), equals(length(split(item(), '.')), 4)), and(equals(length(split(item(), '/')), 2), contains(createArray('8', '16', '24', '32'), last(split(item(), '/')))))))"
+      },
+      "runAfter": {
+        "Initialize_candidates": [
+          "Succeeded"
+        ],
+        "Initialize_rejected": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Add_comment_-_ranges_unevaluable": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "<p><strong>ASE POC playbook did not evaluate the incident IPs.</strong> The WAF policy was not changed. protectedIpRanges contains a value this playbook cannot safely compare. Supported customer entries are a single IPv4 address or a /8, /16, /24, or /32 prefix. No Would-block line was recorded, because an unparsed range must not be skipped.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/Incidents/Comment"
+      },
+      "runAfter": {
+        "Filter_unsupported_ranges": [
+          "Failed"
+        ]
+      }
+    },
+    "Check_unsupported_ranges": {
+      "type": "If",
+      "expression": {
+        "greater": [
+          "@length(body('Filter_unsupported_ranges'))",
+          0
+        ]
+      },
+      "actions": {
+        "Add_comment_-_unsupported_cidr": {
+          "type": "ApiConnection",
+          "inputs": {
+            "body": {
+              "incidentArmId": "@triggerBody()?['object']?['id']",
+              "message": "<p><strong>ASE POC playbook refused to block.</strong> The WAF policy was not changed. protectedIpRanges contains a prefix other than /8, /16, /24, or /32, or a value that is not a single IPv4 address: @{join(body('Filter_unsupported_ranges'), ', ')}. Built-in ranges such as 172.16.0.0/12 stay inside the playbook and are not passed through this parameter. No Would-block line was recorded.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+            },
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/Incidents/Comment"
+          },
+          "runAfter": {}
+        },
+        "Terminate_-_unsupported_cidr": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Succeeded"
+          },
+          "runAfter": {
+            "Add_comment_-_unsupported_cidr": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Filter_unsupported_ranges": [
+          "Succeeded"
+        ]
+      }
+    },
+    "For_each_IP": {
+      "type": "Foreach",
+      "foreach": "@coalesce(body('Entities_-_Get_IPs')?['IPs'], createArray())",
+      "runtimeConfiguration": {
+        "concurrency": {
+          "repetitions": 1
+        }
+      },
+      "actions": {
+        "Check_obvious_invalid": {
+          "type": "If",
+          "expression": {
+            "or": [
+              {
+                "empty": [
+                  "@coalesce(items('For_each_IP')?['Address'], '')"
+                ]
+              },
+              {
+                "contains": [
+                  "@coalesce(items('For_each_IP')?['Address'], '')",
+                  ":"
+                ]
+              },
+              {
+                "contains": [
+                  "@coalesce(items('For_each_IP')?['Address'], '')",
+                  "/"
+                ]
+              },
+              {
+                "contains": [
+                  "@coalesce(items('For_each_IP')?['Address'], '')",
+                  " "
+                ]
+              },
+              {
+                "contains": [
+                  "@coalesce(items('For_each_IP')?['Address'], '')",
+                  ","
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Append_rejected_shape": {
+              "type": "AppendToArrayVariable",
+              "inputs": {
+                "name": "rejected",
+                "value": "@{coalesce(items('For_each_IP')?['Address'], '(empty)')} rejected: empty or not an IPv4 address"
+              },
+              "runAfter": {}
+            }
+          },
+          "else": {
+            "actions": {
+              "Parse_IPv4": {
+                "type": "Scope",
+                "actions": {
+                  "Compose_parts": {
+                    "type": "Compose",
+                    "inputs": "@split(items('For_each_IP')?['Address'], '.')",
+                    "runAfter": {}
+                  },
+                  "Compose_octet_0": {
+                    "type": "Compose",
+                    "inputs": "@int(outputs('Compose_parts')[0])",
+                    "runAfter": {
+                      "Compose_parts": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Compose_octet_1": {
+                    "type": "Compose",
+                    "inputs": "@int(outputs('Compose_parts')[1])",
+                    "runAfter": {
+                      "Compose_octet_0": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Compose_octet_2": {
+                    "type": "Compose",
+                    "inputs": "@int(outputs('Compose_parts')[2])",
+                    "runAfter": {
+                      "Compose_octet_1": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Compose_octet_3": {
+                    "type": "Compose",
+                    "inputs": "@int(outputs('Compose_parts')[3])",
+                    "runAfter": {
+                      "Compose_octet_2": [
+                        "Succeeded"
+                      ]
+                    }
+                  }
+                },
+                "runAfter": {}
+              },
+              "Append_rejected_parse": {
+                "type": "AppendToArrayVariable",
+                "inputs": {
+                  "name": "rejected",
+                  "value": "@{items('For_each_IP')?['Address']} rejected: invalid IPv4"
+                },
+                "runAfter": {
+                  "Parse_IPv4": [
+                    "Failed"
+                  ]
+                }
+              },
+              "Check_octet_values": {
+                "type": "If",
+                "expression": {
+                  "or": [
+                    {
+                      "not": {
+                        "equals": [
+                          "@length(outputs('Compose_parts'))",
+                          4
+                        ]
+                      }
+                    },
+                    {
+                      "greater": [
+                        "@outputs('Compose_octet_0')",
+                        255
+                      ]
+                    },
+                    {
+                      "less": [
+                        "@outputs('Compose_octet_0')",
+                        0
+                      ]
+                    },
+                    {
+                      "greater": [
+                        "@outputs('Compose_octet_1')",
+                        255
+                      ]
+                    },
+                    {
+                      "less": [
+                        "@outputs('Compose_octet_1')",
+                        0
+                      ]
+                    },
+                    {
+                      "greater": [
+                        "@outputs('Compose_octet_2')",
+                        255
+                      ]
+                    },
+                    {
+                      "less": [
+                        "@outputs('Compose_octet_2')",
+                        0
+                      ]
+                    },
+                    {
+                      "greater": [
+                        "@outputs('Compose_octet_3')",
+                        255
+                      ]
+                    },
+                    {
+                      "less": [
+                        "@outputs('Compose_octet_3')",
+                        0
+                      ]
+                    },
+                    {
+                      "not": {
+                        "equals": [
+                          "@string(outputs('Compose_octet_0'))",
+                          "@outputs('Compose_parts')[0]"
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "equals": [
+                          "@string(outputs('Compose_octet_1'))",
+                          "@outputs('Compose_parts')[1]"
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "equals": [
+                          "@string(outputs('Compose_octet_2'))",
+                          "@outputs('Compose_parts')[2]"
+                        ]
+                      }
+                    },
+                    {
+                      "not": {
+                        "equals": [
+                          "@string(outputs('Compose_octet_3'))",
+                          "@outputs('Compose_parts')[3]"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "actions": {
+                  "Append_rejected_values": {
+                    "type": "AppendToArrayVariable",
+                    "inputs": {
+                      "name": "rejected",
+                      "value": "@{items('For_each_IP')?['Address']} rejected: invalid IPv4"
+                    },
+                    "runAfter": {}
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "Check_builtin_protected": {
+                      "type": "If",
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@parameters('overrideProtectedRanges')",
+                              false
+                            ]
+                          },
+                          {
+                            "or": [
+                              {
+                                "equals": [
+                                  "@outputs('Compose_octet_0')",
+                                  0
+                                ]
+                              },
+                              {
+                                "equals": [
+                                  "@outputs('Compose_octet_0')",
+                                  10
+                                ]
+                              },
+                              {
+                                "equals": [
+                                  "@outputs('Compose_octet_0')",
+                                  127
+                                ]
+                              },
+                              {
+                                "and": [
+                                  {
+                                    "equals": [
+                                      "@outputs('Compose_octet_0')",
+                                      169
+                                    ]
+                                  },
+                                  {
+                                    "equals": [
+                                      "@outputs('Compose_octet_1')",
+                                      254
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "and": [
+                                  {
+                                    "equals": [
+                                      "@outputs('Compose_octet_0')",
+                                      172
+                                    ]
+                                  },
+                                  {
+                                    "greaterOrEquals": [
+                                      "@outputs('Compose_octet_1')",
+                                      16
+                                    ]
+                                  },
+                                  {
+                                    "lessOrEquals": [
+                                      "@outputs('Compose_octet_1')",
+                                      31
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "and": [
+                                  {
+                                    "equals": [
+                                      "@outputs('Compose_octet_0')",
+                                      192
+                                    ]
+                                  },
+                                  {
+                                    "equals": [
+                                      "@outputs('Compose_octet_1')",
+                                      168
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "and": [
+                                  {
+                                    "equals": [
+                                      "@outputs('Compose_octet_0')",
+                                      100
+                                    ]
+                                  },
+                                  {
+                                    "greaterOrEquals": [
+                                      "@outputs('Compose_octet_1')",
+                                      64
+                                    ]
+                                  },
+                                  {
+                                    "lessOrEquals": [
+                                      "@outputs('Compose_octet_1')",
+                                      127
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      "actions": {
+                        "Append_rejected_builtin": {
+                          "type": "AppendToArrayVariable",
+                          "inputs": {
+                            "name": "rejected",
+                            "value": "@{items('For_each_IP')?['Address']} rejected: protected built-in range (loopback, RFC1918, link-local, Azure metadata 169.254.169.254, or CGNAT)"
+                          },
+                          "runAfter": {}
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Filter_customer_match": {
+                            "type": "Query",
+                            "inputs": {
+                              "from": "@parameters('protectedIpRanges')",
+                              "where": "@or(equals(item(), items('For_each_IP')?['Address']), and(contains(item(), '/'), or(and(endsWith(item(), '/32'), equals(first(split(item(), '/')), items('For_each_IP')?['Address'])), and(endsWith(item(), '/24'), equals(join(take(split(items('For_each_IP')?['Address'], '.'), 3), '.'), join(take(split(first(split(item(), '/')), '.'), 3), '.'))), and(endsWith(item(), '/16'), equals(join(take(split(items('For_each_IP')?['Address'], '.'), 2), '.'), join(take(split(first(split(item(), '/')), '.'), 2), '.'))), and(endsWith(item(), '/8'), equals(first(split(items('For_each_IP')?['Address'], '.')), first(split(first(split(item(), '/')), '.')))))))"
+                            },
+                            "runAfter": {}
+                          },
+                          "Check_customer_protected": {
+                            "type": "If",
+                            "expression": {
+                              "and": [
+                                {
+                                  "equals": [
+                                    "@parameters('overrideProtectedRanges')",
+                                    false
+                                  ]
+                                },
+                                {
+                                  "greater": [
+                                    "@length(body('Filter_customer_match'))",
+                                    0
+                                  ]
+                                }
+                              ]
+                            },
+                            "actions": {
+                              "Append_rejected_customer": {
+                                "type": "AppendToArrayVariable",
+                                "inputs": {
+                                  "name": "rejected",
+                                  "value": "@{items('For_each_IP')?['Address']} rejected: protectedIpRanges"
+                                },
+                                "runAfter": {}
+                              }
+                            },
+                            "else": {
+                              "actions": {
+                                "Append_candidate": {
+                                  "type": "AppendToArrayVariable",
+                                  "inputs": {
+                                    "name": "candidates",
+                                    "value": "@items('For_each_IP')?['Address']"
+                                  },
+                                  "runAfter": {}
+                                }
+                              }
+                            },
+                            "runAfter": {
+                              "Filter_customer_match": [
+                                "Succeeded"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "runAfter": {}
+                    }
+                  }
+                },
+                "runAfter": {
+                  "Parse_IPv4": [
+                    "Succeeded"
+                  ]
+                }
+              }
+            }
+          },
+          "runAfter": {}
+        }
+      },
+      "runAfter": {
+        "Check_unsupported_ranges": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Add_comment_-_validation_failed": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "<p><strong>ASE POC playbook failed while validating IP entities.</strong> The WAF policy was not changed. Rejected so far: @{if(empty(variables('rejected')), 'none', join(variables('rejected'), '<br>'))}</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/Incidents/Comment"
+      },
+      "runAfter": {
+        "For_each_IP": [
+          "Failed"
+        ]
+      }
+    },
+    "Check_no_candidates": {
+      "type": "If",
+      "expression": {
+        "equals": [
+          "@length(variables('candidates'))",
+          0
+        ]
+      },
+      "actions": {
+        "Add_comment_-_nothing_to_block": {
+          "type": "ApiConnection",
+          "inputs": {
+            "body": {
+              "incidentArmId": "@triggerBody()?['object']?['id']",
+              "message": "<p><strong>ASE POC playbook did not change the WAF policy.</strong> Incident @{coalesce(triggerBody()?['object']?['properties']?['incidentNumber'], '')} (@{coalesce(triggerBody()?['object']?['properties']?['title'], '')}) had no IP entity that passed validation.</p><p>Rejected:<br>@{if(empty(variables('rejected')), 'none', join(variables('rejected'), '<br>'))}</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+            },
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/Incidents/Comment"
+          },
+          "runAfter": {}
+        },
+        "Terminate_-_nothing_to_block": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Succeeded"
+          },
+          "runAfter": {
+            "Add_comment_-_nothing_to_block": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "For_each_IP": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Compose_distinct_candidates": {
+      "type": "Compose",
+      "inputs": "@union(variables('candidates'), createArray())",
+      "runAfter": {
+        "Check_no_candidates": [
+          "Succeeded"
+        ]
+      }
+    },
+    "HTTP_-_Get_WAF_policy": {
+      "type": "Http",
+      "inputs": {
+        "authentication": {
+          "audience": "https://management.azure.com",
+          "type": "ManagedServiceIdentity"
+        },
+        "method": "GET",
+        "queries": {
+          "api-version": "@parameters('armApiVersion')"
+        },
+        "uri": "https://management.azure.com@{parameters('wafPolicyResourceId')}"
+      },
+      "limit": {
+        "timeout": "PT2M"
+      },
+      "runAfter": {
+        "Check_no_candidates": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Add_comment_-_Get_WAF_failed": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "<p><strong>ASE POC playbook could not read the WAF policy.</strong> The policy was not changed, and no Would-block line was recorded, because the current block list is unknown. Confirm the playbook managed identity has Network Contributor on @{parameters('wafPolicyResourceId')} and that wafProvider (@{parameters('wafProvider')}) matches that resource.</p><p>Candidates: @{join(variables('candidates'), ', ')}</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/Incidents/Comment"
+      },
+      "runAfter": {
+        "HTTP_-_Get_WAF_policy": [
+          "Failed",
+          "TimedOut"
+        ]
+      }
+    },
+    "Initialize_existingCustomRules": {
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          {
+            "name": "existingCustomRules",
+            "type": "array",
+            "value": "@if(equals(parameters('wafProvider'), 'FrontDoor'), if(empty(body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']?['rules']), createArray(), body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']?['rules']), if(empty(body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']), createArray(), body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']))"
+          }
+        ]
+      },
+      "runAfter": {
+        "HTTP_-_Get_WAF_policy": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Add_comment_-_policy_shape_failed": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "<p><strong>ASE POC playbook could not read custom rules from the WAF policy.</strong> The policy was not changed. wafProvider is @{parameters('wafProvider')}. Application Gateway stores custom rules as an array. Front Door stores them under customRules.rules. Confirm the provider matches @{parameters('wafPolicyResourceId')}.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/Incidents/Comment"
+      },
+      "runAfter": {
+        "Initialize_existingCustomRules": [
+          "Failed"
+        ]
+      }
+    },
+    "Filter_block_rule": {
+      "type": "Query",
+      "inputs": {
+        "from": "@variables('existingCustomRules')",
+        "where": "@equals(item()?['name'], parameters('blockRuleName'))"
+      },
+      "runAfter": {
+        "Initialize_existingCustomRules": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Filter_other_rules": {
+      "type": "Query",
+      "inputs": {
+        "from": "@variables('existingCustomRules')",
+        "where": "@not(equals(item()?['name'], parameters('blockRuleName')))"
+      },
+      "runAfter": {
+        "Initialize_existingCustomRules": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Compose_existing_match_values": {
+      "type": "Compose",
+      "inputs": "@if(equals(length(body('Filter_block_rule')), 0), createArray(), if(equals(parameters('wafProvider'), 'FrontDoor'), coalesce(first(body('Filter_block_rule'))?['matchConditions']?[0]?['matchValue'], createArray()), coalesce(first(body('Filter_block_rule'))?['matchConditions']?[0]?['matchValues'], createArray())))",
+      "runAfter": {
+        "Filter_block_rule": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Compose_merged_addresses": {
+      "type": "Compose",
+      "inputs": "@union(outputs('Compose_existing_match_values'), outputs('Compose_distinct_candidates'))",
+      "runAfter": {
+        "Compose_existing_match_values": [
+          "Succeeded"
+        ],
+        "Compose_distinct_candidates": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Filter_new_addresses": {
+      "type": "Query",
+      "inputs": {
+        "from": "@outputs('Compose_distinct_candidates')",
+        "where": "@not(contains(outputs('Compose_existing_match_values'), item()))"
+      },
+      "runAfter": {
+        "Compose_existing_match_values": [
+          "Succeeded"
+        ],
+        "Compose_distinct_candidates": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Check_already_blocked": {
+      "type": "If",
+      "expression": {
+        "equals": [
+          "@length(body('Filter_new_addresses'))",
+          0
+        ]
+      },
+      "actions": {
+        "Add_comment_-_already_blocked": {
+          "type": "ApiConnection",
+          "inputs": {
+            "body": {
+              "incidentArmId": "@triggerBody()?['object']?['id']",
+              "message": "<p><strong>ASE POC playbook made no change.</strong> @{join(outputs('Compose_distinct_candidates'), ', ')} is already on custom rule @{parameters('blockRuleName')}. The WAF policy was not written again.</p><p>Rejected:<br>@{if(empty(variables('rejected')), 'none', join(variables('rejected'), '<br>'))}</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+            },
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/Incidents/Comment"
+          },
+          "runAfter": {}
+        },
+        "Terminate_-_already_blocked": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Succeeded"
+          },
+          "runAfter": {
+            "Add_comment_-_already_blocked": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Filter_new_addresses": [
+          "Succeeded"
+        ],
+        "Compose_merged_addresses": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Check_block_list_capacity": {
+      "type": "If",
+      "expression": {
+        "greater": [
+          "@length(outputs('Compose_merged_addresses'))",
+          "@int(parameters('maximumBlockEntries'))"
+        ]
+      },
+      "actions": {
+        "Add_comment_-_list_full": {
+          "type": "ApiConnection",
+          "inputs": {
+            "body": {
+              "incidentArmId": "@triggerBody()?['object']?['id']",
+              "message": "<p><strong>ASE POC playbook did not update the WAF policy.</strong> Adding @{join(body('Filter_new_addresses'), ', ')} would exceed maximumBlockEntries (@{parameters('maximumBlockEntries')}). Current list size: @{length(outputs('Compose_existing_match_values'))}. Remove stale addresses from @{parameters('blockRuleName')} before retrying.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+            },
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/Incidents/Comment"
+          },
+          "runAfter": {}
+        },
+        "Terminate_-_list_full": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Succeeded"
+          },
+          "runAfter": {
+            "Add_comment_-_list_full": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Check_already_blocked": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Check_auto_block": {
+      "type": "If",
+      "expression": {
+        "equals": [
+          "@parameters('autoBlockEnabled')",
+          true
+        ]
+      },
+      "actions": {
+        "Check_provider": {
+          "type": "If",
+          "expression": {
+            "equals": [
+              "@parameters('wafProvider')",
+              "FrontDoor"
+            ]
+          },
+          "actions": {
+            "Compose_rule_front_door": {
+              "type": "Compose",
+              "inputs": {
+                "name": "@parameters('blockRuleName')",
+                "enabledState": "Enabled",
+                "priority": "@int(parameters('blockRulePriority'))",
+                "ruleType": "MatchRule",
+                "action": "Block",
+                "matchConditions": [
+                  {
+                    "matchVariable": "RemoteAddr",
+                    "operator": "IPMatch",
+                    "negateCondition": false,
+                    "matchValue": "@outputs('Compose_merged_addresses')"
+                  }
+                ]
+              },
+              "runAfter": {}
+            },
+            "Compose_all_rules_front_door": {
+              "type": "Compose",
+              "inputs": "@union(createArray(outputs('Compose_rule_front_door')), body('Filter_other_rules'))",
+              "runAfter": {
+                "Compose_rule_front_door": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "HTTP_-_Put_Front_Door_policy": {
+              "type": "Http",
+              "inputs": {
+                "authentication": {
+                  "audience": "https://management.azure.com",
+                  "type": "ManagedServiceIdentity"
+                },
+                "method": "PUT",
+                "uri": "https://management.azure.com@{parameters('wafPolicyResourceId')}",
+                "queries": {
+                  "api-version": "@parameters('armApiVersion')"
+                },
+                "body": {
+                  "location": "@{body('HTTP_-_Get_WAF_policy')?['location']}",
+                  "sku": "@body('HTTP_-_Get_WAF_policy')?['sku']",
+                  "tags": "@if(empty(body('HTTP_-_Get_WAF_policy')?['tags']), json('{}'), body('HTTP_-_Get_WAF_policy')?['tags'])",
+                  "properties": {
+                    "policySettings": "@body('HTTP_-_Get_WAF_policy')?['properties']?['policySettings']",
+                    "customRules": {
+                      "rules": "@outputs('Compose_all_rules_front_door')"
+                    },
+                    "managedRules": "@body('HTTP_-_Get_WAF_policy')?['properties']?['managedRules']"
+                  }
+                },
+                "retryPolicy": {
+                  "type": "none"
+                }
+              },
+              "limit": {
+                "timeout": "PT2M"
+              },
+              "runAfter": {
+                "Compose_all_rules_front_door": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Add_comment_-_blocked_front_door": {
+              "type": "ApiConnection",
+              "inputs": {
+                "body": {
+                  "incidentArmId": "@triggerBody()?['object']?['id']",
+                  "message": "<p><strong>ASE POC playbook updated the Front Door WAF policy.</strong> Incident @{coalesce(triggerBody()?['object']?['properties']?['incidentNumber'], '')} (@{coalesce(triggerBody()?['object']?['properties']?['title'], '')}).</p><p>@{join(body('Select_blocked_lines_front_door'), '<br>')}</p><p>Custom rule @{parameters('blockRuleName')}, matchVariable RemoteAddr, operator IPMatch, action Block, priority @{parameters('blockRulePriority')}. List size @{length(outputs('Compose_merged_addresses'))} of @{parameters('maximumBlockEntries')}. Other custom rules, including the simulated probe rule, were kept.</p><p>Rejected:<br>@{if(empty(variables('rejected')), 'none', join(variables('rejected'), '<br>'))}</p><p>Policy: @{parameters('wafPolicyResourceId')}</p><p>There is no automatic expiry. Rollback is an operator action. Logic App run: @{workflow()['run']['name']}</p>"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/Incidents/Comment"
+              },
+              "runAfter": {
+                "Select_blocked_lines_front_door": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Select_blocked_lines_front_door": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('Filter_new_addresses')",
+                "select": "@concat('Blocked IP: ', item())"
+              },
+              "runAfter": {
+                "HTTP_-_Put_Front_Door_policy": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Add_comment_-_Put_Front_Door_failed": {
+              "type": "ApiConnection",
+              "inputs": {
+                "body": {
+                  "incidentArmId": "@triggerBody()?['object']?['id']",
+                  "message": "<p><strong>ASE POC playbook failed while updating the Front Door WAF policy.</strong> Do not assume @{join(body('Filter_new_addresses'), ', ')} was blocked. Read the policy before you retry. Logic App run: @{workflow()['run']['name']}</p>"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/Incidents/Comment"
+              },
+              "runAfter": {
+                "HTTP_-_Put_Front_Door_policy": [
+                  "Failed",
+                  "TimedOut"
+                ]
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "Check_application_gateway_provider": {
+                "type": "If",
+                "expression": {
+                  "equals": [
+                    "@parameters('wafProvider')",
+                    "ApplicationGateway"
+                  ]
+                },
+                "actions": {
+                  "Compose_rule_application_gateway": {
+                    "type": "Compose",
+                    "inputs": {
+                      "name": "@parameters('blockRuleName')",
+                      "priority": "@int(parameters('blockRulePriority'))",
+                      "ruleType": "MatchRule",
+                      "action": "Block",
+                      "state": "Enabled",
+                      "matchConditions": [
+                        {
+                          "matchVariables": [
+                            {
+                              "variableName": "RemoteAddr"
+                            }
+                          ],
+                          "operator": "IPMatch",
+                          "negationCondition": false,
+                          "matchValues": "@outputs('Compose_merged_addresses')",
+                          "transforms": []
+                        }
+                      ]
+                    },
+                    "runAfter": {}
+                  },
+                  "Compose_all_rules_application_gateway": {
+                    "type": "Compose",
+                    "inputs": "@union(createArray(outputs('Compose_rule_application_gateway')), body('Filter_other_rules'))",
+                    "runAfter": {
+                      "Compose_rule_application_gateway": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "HTTP_-_Put_Application_Gateway_policy": {
+                    "type": "Http",
+                    "inputs": {
+                      "authentication": {
+                        "audience": "https://management.azure.com",
+                        "type": "ManagedServiceIdentity"
+                      },
+                      "method": "PUT",
+                      "uri": "https://management.azure.com@{parameters('wafPolicyResourceId')}",
+                      "queries": {
+                        "api-version": "@parameters('armApiVersion')"
+                      },
+                      "body": {
+                        "location": "@{body('HTTP_-_Get_WAF_policy')?['location']}",
+                        "tags": "@if(empty(body('HTTP_-_Get_WAF_policy')?['tags']), json('{}'), body('HTTP_-_Get_WAF_policy')?['tags'])",
+                        "properties": {
+                          "policySettings": "@body('HTTP_-_Get_WAF_policy')?['properties']?['policySettings']",
+                          "customRules": "@outputs('Compose_all_rules_application_gateway')",
+                          "managedRules": "@body('HTTP_-_Get_WAF_policy')?['properties']?['managedRules']"
+                        }
+                      },
+                      "retryPolicy": {
+                        "type": "none"
+                      }
+                    },
+                    "limit": {
+                      "timeout": "PT2M"
+                    },
+                    "runAfter": {
+                      "Compose_all_rules_application_gateway": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Select_blocked_lines_application_gateway": {
+                    "type": "Select",
+                    "inputs": {
+                      "from": "@body('Filter_new_addresses')",
+                      "select": "@concat('Blocked IP: ', item())"
+                    },
+                    "runAfter": {
+                      "HTTP_-_Put_Application_Gateway_policy": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Add_comment_-_blocked_application_gateway": {
+                    "type": "ApiConnection",
+                    "inputs": {
+                      "body": {
+                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                        "message": "<p><strong>ASE POC playbook updated the Application Gateway WAF policy.</strong> Incident @{coalesce(triggerBody()?['object']?['properties']?['incidentNumber'], '')} (@{coalesce(triggerBody()?['object']?['properties']?['title'], '')}).</p><p>@{join(body('Select_blocked_lines_application_gateway'), '<br>')}</p><p>Custom rule @{parameters('blockRuleName')}, variable RemoteAddr, operator IPMatch, action Block, priority @{parameters('blockRulePriority')}. List size @{length(outputs('Compose_merged_addresses'))} of @{parameters('maximumBlockEntries')}. Other custom rules, including the simulated probe rule, were kept. Read-only policy links were not sent back on the PUT.</p><p>Rejected:<br>@{if(empty(variables('rejected')), 'none', join(variables('rejected'), '<br>'))}</p><p>Policy: @{parameters('wafPolicyResourceId')}</p><p>There is no automatic expiry. Rollback is an operator action. Logic App run: @{workflow()['run']['name']}</p>"
+                      },
+                      "host": {
+                        "connection": {
+                          "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                        }
+                      },
+                      "method": "post",
+                      "path": "/Incidents/Comment"
+                    },
+                    "runAfter": {
+                      "Select_blocked_lines_application_gateway": [
+                        "Succeeded"
+                      ]
+                    }
+                  },
+                  "Add_comment_-_Put_Application_Gateway_failed": {
+                    "type": "ApiConnection",
+                    "inputs": {
+                      "body": {
+                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                        "message": "<p><strong>ASE POC playbook failed while updating the Application Gateway WAF policy.</strong> Do not assume @{join(body('Filter_new_addresses'), ', ')} was blocked. Read the policy before you retry. Logic App run: @{workflow()['run']['name']}</p>"
+                      },
+                      "host": {
+                        "connection": {
+                          "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                        }
+                      },
+                      "method": "post",
+                      "path": "/Incidents/Comment"
+                    },
+                    "runAfter": {
+                      "HTTP_-_Put_Application_Gateway_policy": [
+                        "Failed",
+                        "TimedOut"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "Add_comment_-_unknown_provider": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "body": {
+                          "incidentArmId": "@triggerBody()?['object']?['id']",
+                          "message": "<p><strong>ASE POC playbook did not change the WAF policy.</strong> wafProvider '@{parameters('wafProvider')}' is not ApplicationGateway or FrontDoor. Candidates that would have been considered: @{join(body('Filter_new_addresses'), ', ')}.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+                        },
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/Incidents/Comment"
+                      },
+                      "runAfter": {}
+                    },
+                    "Terminate_-_unknown_provider": {
+                      "type": "Terminate",
+                      "inputs": {
+                        "runStatus": "Succeeded"
+                      },
+                      "runAfter": {
+                        "Add_comment_-_unknown_provider": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "runAfter": {}
+              }
+            }
+          },
+          "runAfter": {}
+        }
+      },
+      "else": {
+        "actions": {
+          "Select_dry_run_lines": {
+            "type": "Select",
+            "inputs": {
+              "from": "@body('Filter_new_addresses')",
+              "select": "@concat('Would block IP: ', item())"
+            },
+            "runAfter": {}
+          },
+          "Add_comment_-_dry_run": {
+            "type": "ApiConnection",
+            "inputs": {
+              "body": {
+                "incidentArmId": "@triggerBody()?['object']?['id']",
+                "message": "<p><strong>ASE POC playbook dry-run.</strong> autoBlockEnabled is false. The WAF policy was not changed. Incident @{coalesce(triggerBody()?['object']?['properties']?['incidentNumber'], '')} (@{coalesce(triggerBody()?['object']?['properties']?['title'], '')}).</p><p>@{join(body('Select_dry_run_lines'), '<br>')}</p><p>Provider: @{parameters('wafProvider')}. Policy: @{parameters('wafPolicyResourceId')}. Custom rule that would be updated: @{parameters('blockRuleName')}. Resulting list size if blocking were enabled: @{length(outputs('Compose_merged_addresses'))} of @{parameters('maximumBlockEntries')}.</p><p>Rejected:<br>@{if(empty(variables('rejected')), 'none', join(variables('rejected'), '<br>'))}</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+              },
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                }
+              },
+              "method": "post",
+              "path": "/Incidents/Comment"
+            },
+            "runAfter": {
+              "Select_dry_run_lines": [
+                "Succeeded"
+              ]
+            }
+          },
+          "Terminate_-_dry_run": {
+            "type": "Terminate",
+            "inputs": {
+              "runStatus": "Succeeded"
+            },
+            "runAfter": {
+              "Add_comment_-_dry_run": [
+                "Succeeded"
+              ]
+            }
+          }
+        }
+      },
+      "runAfter": {
+        "Check_block_list_capacity": [
+          "Succeeded"
+        ],
+        "Filter_other_rules": [
+          "Succeeded"
+        ]
+      }
+    }
+  },
+  "outputs": {}
+}

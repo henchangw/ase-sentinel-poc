@@ -1,0 +1,9 @@
+# Local build and deployment artifacts
+*.arm.json
+.last-deployment.json
+.azcli
+
+# Editor
+.vs/
+.vscode/
+*.user

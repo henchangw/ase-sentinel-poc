@@ -1,0 +1,10 @@
+// Use only after ASE confirms this table exists in the workspace.
+// It is not the destination this POC configures, because this POC does not
+// create a Front Door profile.
+AzureFrontDoorWebApplicationFirewallLog
+| where TimeGenerated > ago(2h)
+| extend ClientIp = tostring(ClientIP)
+| where RuleName == "PocSimulatedProbe" or RequestUri has "ase-poc-probe" or RuleName == "SentinelAutoBlock"
+| project TimeGenerated, ClientIp, Action, RuleName, RequestUri, Host, TrackingReference
+| order by TimeGenerated desc
+| take 50
