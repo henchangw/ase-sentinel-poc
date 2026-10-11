@@ -215,7 +215,7 @@
     },
     "For_each_IP": {
       "type": "Foreach",
-      "foreach": "@coalesce(body('Entities_-_Get_IPs')?['IPs'], createArray())",
+      "foreach": "@coalesce(body('Entities_-_Get_IPs')?['IPs'], json('[]'))",
       "runtimeConfiguration": {
         "concurrency": {
           "repetitions": 1
@@ -703,7 +703,7 @@
     },
     "Compose_distinct_candidates": {
       "type": "Compose",
-      "inputs": "@union(variables('candidates'), createArray())",
+      "inputs": "@union(variables('candidates'), json('[]'))",
       "runAfter": {
         "Check_no_candidates": [
           "Succeeded"
@@ -761,7 +761,7 @@
           {
             "name": "existingCustomRules",
             "type": "array",
-            "value": "@if(equals(parameters('wafProvider'), 'FrontDoor'), if(empty(body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']?['rules']), createArray(), body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']?['rules']), if(empty(body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']), createArray(), body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']))"
+            "value": "@if(equals(parameters('wafProvider'), 'FrontDoor'), if(empty(body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']?['rules']), json('[]'), body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']?['rules']), if(empty(body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']), json('[]'), body('HTTP_-_Get_WAF_policy')?['properties']?['customRules']))"
           }
         ]
       },
@@ -818,7 +818,7 @@
     },
     "Compose_existing_match_values": {
       "type": "Compose",
-      "inputs": "@if(equals(length(body('Filter_block_rule')), 0), createArray(), if(equals(parameters('wafProvider'), 'FrontDoor'), coalesce(first(body('Filter_block_rule'))?['matchConditions']?[0]?['matchValue'], createArray()), coalesce(first(body('Filter_block_rule'))?['matchConditions']?[0]?['matchValues'], createArray())))",
+      "inputs": "@if(equals(length(body('Filter_block_rule')), 0), json('[]'), if(equals(parameters('wafProvider'), 'FrontDoor'), coalesce(first(body('Filter_block_rule'))?['matchConditions']?[0]?['matchValue'], json('[]')), coalesce(first(body('Filter_block_rule'))?['matchConditions']?[0]?['matchValues'], json('[]'))))",
       "runAfter": {
         "Filter_block_rule": [
           "Succeeded"

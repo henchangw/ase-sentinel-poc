@@ -13,7 +13,7 @@ param principalId string
 ])
 param wafProvider string
 
-var networkContributorRoleId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
+var networkContributorRoleId = '4d97b98b-1d4f-4787-a291-c67834d212e7'
 
 resource applicationGatewayPolicy 'Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies@2024-05-01' existing = if (wafProvider == 'ApplicationGateway') {
   name: policyName

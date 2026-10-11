@@ -198,7 +198,8 @@ if ($WhatIf) {
 }
 
 function Get-SentinelAutomationPrincipalId {
-    $raw = az ad sp list --display-name 'Azure Security Insights' --query '[].id' --output tsv 2>$null
+    # display-name is a prefix match and also returns Content As Code and Management.
+    $raw = az ad sp list --display-name 'Azure Security Insights' --query "[?displayName=='Azure Security Insights'].id" --output tsv 2>$null
     if ($LASTEXITCODE -ne 0) {
         return $null
     }

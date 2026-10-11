@@ -8,7 +8,7 @@ let BlockRuleName = "__BLOCK_RULE__";
 let ProbeRuleName = "__PROBE_RULE__";
 let ProbeMarker = "__PROBE_MARKER__";
 let BuiltInProtected = dynamic(["0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "169.254.169.254/32", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"]);
-let WatchlistRanges = coalesce(toscalar(_GetWatchlist('__WATCHLIST__') | where isnotempty(IPAddress) | summarize make_list(tostring(IPAddress))), dynamic([]));
+let WatchlistRanges = coalesce(toscalar(_GetWatchlist('__WATCHLIST__') | extend IPAddress = column_ifexists('IPAddress', '') | where isnotempty(IPAddress) | summarize make_list(IPAddress)), dynamic([]));
 AzureDiagnostics
 | where TimeGenerated > ago(__LOOKBACK__)
 | where Category == "FrontDoorWebApplicationFirewallLog"

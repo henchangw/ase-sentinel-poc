@@ -201,6 +201,11 @@ module playbook 'modules/playbook.bicep' = {
 
 module sentinel 'modules/sentinel.bicep' = {
   name: 'sentinel'
+  // The analytics rule names AGWFirewallLogs. Create the Dedicated diagnostic
+  // setting first so that table is the one the rule is written against.
+  dependsOn: [
+    waf
+  ]
   params: {
     location: location
     workspaceName: logAnalytics.outputs.workspaceName

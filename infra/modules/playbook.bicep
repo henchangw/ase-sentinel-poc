@@ -43,7 +43,7 @@ param logAnalyticsWorkspaceId string
 param tags object
 
 var connectionName = 'azuresentinel-${playbookName}'
-var sentinelResponderRoleId = 'ab8e14d6-4a74-4a29-9ba8-549422addade'
+var sentinelResponderRoleId = '3e150937-b8fe-4cfb-8069-0eaf05ecd056'
 var policyIdParts = split(wafPolicyResourceId, '/')
 var policySubscriptionId = policyIdParts[2]
 var policyResourceGroup = policyIdParts[4]

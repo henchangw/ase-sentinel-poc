@@ -7,3 +7,5 @@ The playbook is started by the Sentinel incident trigger. It reads IP entities, 
 Application Gateway and Front Door use different custom-rule JSON. A provider value other than `ApplicationGateway` or `FrontDoor` does not PUT. A prefix in `protectedIpRanges` other than `/8`, `/16`, `/24`, or `/32` stops the run before any would-block line.
 
 The system-assigned identity needs Microsoft Sentinel Responder on the workspace resource group and Network Contributor on the one WAF policy. Both assignments are in the Bicep modules.
+
+Empty arrays in the workflow use `json('[]')`. `createArray()` with no arguments is rejected by the Logic Apps runtime, including on the first dry-run when `SentinelAutoBlock` does not exist yet.

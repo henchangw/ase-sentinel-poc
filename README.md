@@ -6,7 +6,7 @@ Proof of concept for this path:
 
 The detection is a **simulated probe**, a normal HTTP GET that carries the query-string marker `ase-poc-probe`. It does not identify a malicious actor. The playbook's safe default is dry-run: it records `Would block IP: <address>` on the Sentinel incident and does not change the WAF.
 
-This is a reference implementation, not a production deployment. Nothing in this repository was deployed to an Azure subscription as part of authoring it. Bicep was compiled locally. See [Known limitations](#known-limitations).
+This is a reference implementation, not a production deployment. A dry-run deployment was exercised end to end: the probe returned HTTP 403, `AGWFirewallLogs` showed `PocSimulatedProbe`, Sentinel opened an incident, and the playbook commented `Would block IP` without changing the WAF policy. The test gateway bills until `scripts/cleanup.ps1` deletes the resource group. See [Known limitations](#known-limitations).
 
 ## What the POC demonstrates
 
@@ -169,7 +169,7 @@ Three minutes is often too short for ingestion. A miss on that query is not a fa
 - Rule name: **ASE POC - simulated WAF probe**
 - Severity: Medium
 - Title shape: `ASE POC simulated WAF probe from <ip>`
-- The description says this is a simulated probe, not an identified attacker.
+- The description says this is a simulated probe, not an identified attacker. It includes the event count, the client IP, and the WAF action. Sentinel allows three description placeholders, so the other fields stay on the custom details.
 - Entity: IP / Address = the client IP
 - Custom details: event count, rule ids, messages, request URIs, hosts, WAF actions, first seen, last seen, probe marker
 - Grouped by IP for 12 hours. A repeat does not open a second incident. Closed incidents are not reopened.
@@ -281,7 +281,7 @@ That deletes the workspace, Sentinel, the playbook, the test gateway, and a WAF 
 
 ## Known limitations
 
-- Syntax-checked with `az bicep build` and PowerShell parsing. Not deployed, and the KQL was not executed against a live workspace.
+- Bicep was built with `az bicep build`. The Application Gateway dry-run path was deployed and the analytics query was run against the live workspace. Front Door was not deployed. `autoBlockEnabled` stayed false, so the playbook did not PUT the policy.
 - The test gateway is HTTP/80, with dummy backend `192.0.2.10`, no TLS, no NSG, and no availability zones. Those are POC shortcuts. See [docs/production-hardening.md](docs/production-hardening.md).
 - WAF_v2 cost starts when the gateway exists and stops when the resource group delete finishes.
 - Microsoft documents that an Application Gateway custom block rule is logged and **not** enforced while the policy is in Detection mode. The default here is Prevention so the probe returns 403 and the log action can be `Blocked`. The query also accepts `Detected` so a Detection-mode log can still open an incident. If a live workspace shows a different `Action` value, change the query after you see that value. Do not add action names that have not been observed.
@@ -293,7 +293,7 @@ That deletes the workspace, Sentinel, the playbook, the test gateway, and a WAF 
 - No automatic unblock, no expiry, and no analyst approval gate inside Sentinel. Approval is "do not set `autoBlockEnabled`".
 - After a real block, that IP can stop producing probe logs.
 - The 30 second wait for the automation-rule role can be too short.
-- The Azure Security Insights lookup depends on the display name `Azure Security Insights`.
+- The Azure Security Insights lookup depends on the display name `Azure Security Insights`. The deploy script filters that exact name. A prefix match also returns Content As Code and Management.
 
 ## Questions to Confirm with ASE
 

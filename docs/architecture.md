@@ -19,6 +19,8 @@ The POC is one resource group. An engineer can delete that group and redeploy it
 
 The KQL files are selected at deploy time in `infra/modules/sentinel.bicep`. Replacing the WAF product is a parameter and a policy resource id, not a rewrite of the incident path. The playbook branches on `wafProvider` and will not PUT when that value is anything else.
 
+The Sentinel module waits for the test-rig module, which creates the Dedicated diagnostic setting, before the analytics rule that names `AGWFirewallLogs` is saved.
+
 `deployTestWaf` is ignored unless the provider is Application Gateway. The deploy script rejects `FrontDoor` combined with the test rig so the two are not half-configured.
 
 ## Request path on the test rig
@@ -45,6 +47,8 @@ The query keeps a row when all of the following are true:
 - Unless `overrideProtectedRanges` is true: the address is not private, not inside the built-in ranges, and not inside watchlist `AseWafIpAllowlist`.
 
 The summary is one row per client IP. Projected string columns are `ClientIp`, `EventCountText`, `RuleIdList`, `MessageList`, `RequestUriList`, `HostnameList`, `ActionList`, `FirstSeenText`, `LastSeenText`, and `ProbeMarkerText`. Sentinel custom details have to be strings. The IP entity mapping uses `ClientIp`.
+
+The alert title is `ASE POC simulated WAF probe from {{ClientIp}}`. The description uses three placeholders, which is the Sentinel maximum: the event count, the client IP, and the action list. Rule ids, requests, hosts, and timestamps stay on the custom details.
 
 Threshold and the observation window are parameters. The rule trigger is `GreaterThan 0` because the KQL already applies the threshold. Frequency cannot be below 5 minutes.
 
@@ -79,8 +83,8 @@ The foreach runs at concurrency 1. Customer-range comparison uses a Filter actio
 
 | Principal | Role | Scope |
 | --- | --- | --- |
-| Playbook managed identity | Microsoft Sentinel Responder `ab8e14d6-4a74-4a29-9ba8-549422addade` | POC resource group, so it can comment on incidents in the workspace in that group |
-| Playbook managed identity | Network Contributor `b24988ac-6180-42a0-ab88-20f7382dd24c` | The one WAF policy resource |
+| Playbook managed identity | Microsoft Sentinel Responder `3e150937-b8fe-4cfb-8069-0eaf05ecd056` | POC resource group, so it can comment on incidents in the workspace in that group |
+| Playbook managed identity | Network Contributor `4d97b98b-1d4f-4787-a291-c67834d212e7` | The one WAF policy resource |
 | Azure Security Insights service principal | Microsoft Sentinel Automation Contributor `f4c81013-99ee-4d62-a7ee-b3f1f648599a` | POC resource group, so the automation rule can start the playbook |
 
 No secrets, connection strings, or user OAuth tokens are stored. The automation-rule role assignment name is `guid(resourceGroup, principalId, roleId)`. The automation rule name is `guid('ase-waf-block-playbook', workspace.id)`.

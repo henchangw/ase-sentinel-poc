@@ -155,7 +155,9 @@ resource analyticsRule 'Microsoft.SecurityInsights/alertRules@2024-01-01-preview
     }
     alertDetailsOverride: {
       alertDisplayNameFormat: 'ASE POC simulated WAF probe from {{ClientIp}}'
-      alertDescriptionFormat: 'POC simulated probe, not an identified attacker. {{EventCountText}} matching WAF events from {{ClientIp}}. Actions: {{ActionList}}. Rules: {{RuleIdList}}. Requests: {{RequestUriList}}. First: {{FirstSeenText}}. Last: {{LastSeenText}}.'
+      // Sentinel allows at most three placeholders in the description.
+      // Rule ids, requests, hosts, and timestamps stay on customDetails.
+      alertDescriptionFormat: 'POC simulated probe, not an identified attacker. {{EventCountText}} matching WAF events from {{ClientIp}}. Actions: {{ActionList}}.'
     }
     eventGroupingSettings: {
       aggregationKind: 'AlertPerResult'
