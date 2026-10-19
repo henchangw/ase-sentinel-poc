@@ -17,7 +17,7 @@ The POC is one resource group. An engineer can delete that group and redeploy it
 | Action values the query accepts | `Blocked`, `Detected` | `Block`, `Log` |
 | Block-rule JSON | `customRules[]`, `matchVariables[].variableName`, `matchValues`, `state` | `customRules.rules[]`, `matchVariable`, `matchValue`, `enabledState`, plus `sku` echoed from GET |
 
-The KQL files are selected at deploy time in `infra/modules/sentinel.bicep`. Replacing the WAF product is a parameter and a policy resource id, not a rewrite of the incident path. The playbook branches on `wafProvider` and will not PUT when that value is anything else.
+The KQL files are selected at deploy time in `infra/modules/sentinel.bicep`. Replacing the WAF product is a parameter and a policy resource id, not a rewrite of the incident path. The function branches on `wafProvider` and will not PUT when that value is anything else.
 
 The Sentinel module waits for the test-rig module, which creates the Dedicated diagnostic setting, before the analytics rule that names `AGWFirewallLogs` is saved.
 
@@ -43,7 +43,7 @@ The query keeps a row when all of the following are true:
 - Application Gateway: `Action` is `Blocked` or `Detected`. Front Door: `Action` is `Block` or `Log`.
 - The rule name is not `SentinelAutoBlock`.
 - The rule name is `PocSimulatedProbe`, or the request URI contains `ase-poc-probe`.
-- The client value is a non-empty IPv4 address.
+- The client value is a non-empty IPv4 address, or an IPv6 address. IPv6 is normalized with `parse_ipv6()` to eight lowercase hex groups. IPv4-mapped IPv6 (`::ffff:0:0/96`) is converted back to dotted IPv4 before the protected-range checks. A value that contains `:` and does not parse is dropped.
 - Unless `overrideProtectedRanges` is true: the address is not private, not inside the built-in ranges, and not inside watchlist `AseWafIpAllowlist`.
 
 The summary is one row per client IP. Projected string columns are `ClientIp`, `EventCountText`, `RuleIdList`, `MessageList`, `RequestUriList`, `HostnameList`, `ActionList`, `FirstSeenText`, `LastSeenText`, and `ProbeMarkerText`. Sentinel custom details have to be strings. The IP entity mapping uses `ClientIp`.
@@ -58,36 +58,32 @@ Tokens in the KQL files are replaced by Bicep `replace()` for the threshold, win
 
 ## Playbook
 
-Consumption Logic App, system-assigned managed identity, definition in `playbooks/block-malicious-ip/workflow.json`.
+The deployed playbook is a Consumption Logic App, system-assigned managed identity, definition in `playbooks/block-malicious-ip/thin-workflow.json`. `workflow.json` in the same folder is the previous expression implementation. Deploy does not load it.
 
 The Sentinel connection uses `parameterValueType: Alternative` and `ManagedServiceIdentity`. Bicep warns BCP187 on `kind` and BCP037 on `parameterValueType`. Those properties are required for this connection and are kept.
 
-Trigger path: `/incident-creation`. IP extraction: Sentinel action `Entities - Get IPs` with `triggerBody().object.properties.relatedEntities`.
+Trigger path: `/incident-creation`. The Logic App calls `Entities - Get IPs`, selects each `Address`, and POSTs once to `/api/SentinelWafAutoBlock`. The HTTP action does not retry and times out at two minutes. A successful response already includes the incident comment, so the Logic App does not write a second one. If the entity call or the function call fails, the Logic App comments and does not claim the address was blocked.
 
-Validation, in order:
+The Python function owns validation, the WAF read, dry-run, and the PUT. `autoBlockEnabled` is a Function App setting. The deployed default is the JSON boolean `true`. Only that JSON boolean sends a PUT. A missing setting stays dry-run. The contract is in `function-app/README.md`.
 
-1. If any `protectedIpRanges` entry is not a single IPv4 or `/8`, `/16`, `/24`, `/32`, comment and stop. No "Would block" line.
-2. Reject empty values, anything containing `:`, `/`, a space, or a comma, and any value that is not four canonical decimal octets in `0..255`. A non-numeric octet fails inside a scope; that failure appends `invalid IPv4` instead of failing the run.
-3. Unless override is true, reject `0.0.0.0/8`, `10.0.0.0/8`, `127.0.0.0/8`, `169.254.0.0/16` (this includes `169.254.169.254`), `172.16.0.0/12`, `192.168.0.0/16`, and `100.64.0.0/10`. The `/12` and `/10` checks are octet comparisons, not the customer prefix matcher.
-4. Unless override is true, reject an address contained in `protectedIpRanges`.
-5. GET the policy. A failed GET comments and does not guess a block line.
-6. Read existing match values from `matchValues` (Application Gateway) or `matchValue` (Front Door). `union` drops duplicates.
-7. If nothing new remains, comment that the address is already listed.
-8. If the merged list would exceed `maximumBlockEntries`, comment and do not write a partial list.
-9. If `autoBlockEnabled` is not the boolean `true`, comment `Would block IP: <address>` and terminate. The PUT actions are not on this branch.
-10. If it is `true`, PUT only the matching provider body, then comment `Blocked IP: <address>`. A failed PUT comments that the address must not be assumed blocked. The PUT retry policy is none.
+The function runs on Flex Consumption (`FC1`), Python 3.11, with a system-assigned managed identity. In `eastus` this subscription has no quota for Y1, Basic, Standard, Premium v3, or Elastic Premium. Flex bills for executions. The scale cap is 40 instances, which is the documented minimum for that cap. `scripts/deploy.ps1` publishes the zip after the main template and then binds the function key. The key is not printed. The main template first deploys the playbook with an empty key, so a run during that window stops before a block decision.
 
-The foreach runs at concurrency 1. Customer-range comparison uses a Filter action, not a nested foreach, so the loop does not share a match flag across parallel iterations.
+Application Insights is a workspace-based component on the same Log Analytics workspace. The function settings are `APPLICATIONINSIGHTS_CONNECTION_STRING` and `APPLICATIONINSIGHTS_AUTHENTICATION_STRING=Authorization=AAD`. The connection string is not printed. Invocation logs are `AppRequests` and `AppTraces` in that workspace. `host.json` turns sampling off.
+
+This subscription's storage policies force `publicNetworkAccess` to Disabled and shared-key access off unless the account is tagged `SecurityControl=Ignore`. That tag is set only on the function storage account. Public network access stays enabled so Flex can reach the blob container without a private endpoint. Shared-key access stays enabled because Flex package upload uses the account key. The function runtime still uses its managed identity for host storage. Anonymous blob access stays disabled. The account key is not written to the repository.
 
 ## Identity and RBAC
 
 | Principal | Role | Scope |
 | --- | --- | --- |
-| Playbook managed identity | Microsoft Sentinel Responder `3e150937-b8fe-4cfb-8069-0eaf05ecd056` | POC resource group, so it can comment on incidents in the workspace in that group |
-| Playbook managed identity | Network Contributor `4d97b98b-1d4f-4787-a291-c67834d212e7` | The one WAF policy resource |
+| Playbook managed identity | Microsoft Sentinel Responder `3e150937-b8fe-4cfb-8069-0eaf05ecd056` | POC resource group, so it can read IP entities and comment when the function call does not finish |
+| Function managed identity | Microsoft Sentinel Responder `3e150937-b8fe-4cfb-8069-0eaf05ecd056` | POC resource group, so it can comment on the incident after a decision |
+| Function managed identity | Network Contributor `4d97b98b-1d4f-4787-a291-c67834d212e7` | The one WAF policy resource |
+| Function managed identity | Storage Blob Data Owner, Storage Queue Data Contributor, Storage Table Data Contributor | The function storage account |
+| Function managed identity | Monitoring Metrics Publisher `3913510d-42f4-4e42-8a64-420c390055eb` | The Application Insights component |
 | Azure Security Insights service principal | Microsoft Sentinel Automation Contributor `f4c81013-99ee-4d62-a7ee-b3f1f648599a` | POC resource group, so the automation rule can start the playbook |
 
-No secrets, connection strings, or user OAuth tokens are stored. The automation-rule role assignment name is `guid(resourceGroup, principalId, roleId)`. The automation rule name is `guid('ase-waf-block-playbook', workspace.id)`.
+No user OAuth token is stored in source. The function reaches its storage account with managed identity, not an account key. The function key is created at deploy time and is not printed. The automation-rule role assignment name is `guid(resourceGroup, principalId, roleId)`. The automation rule name is `guid('ase-waf-block-playbook', workspace.id)`.
 
 Network Contributor can change more than the custom-rule list. That gap is recorded in [security-considerations.md](security-considerations.md) and [production-hardening.md](production-hardening.md). A custom role definition was not added, because its exact action set should be confirmed against the policy type ASE uses.
 
@@ -97,4 +93,5 @@ Network Contributor can change more than the custom-rule list. That gap is recor
 - Microsoft Sentinel Content Hub solution for WAF. Those workbooks often assume `AzureDiagnostics`.
 - Private Link, TLS, a real backend, zones, an NSG, and customer-managed keys.
 - Automatic expiry, unblock, or an approval action inside the automation rule.
-- IPv6. Addresses containing `:` are rejected.
+- Enforcing an IPv6 block on Application Gateway. `IPMatch` matches IPv4 only. The test gateway frontend is IPv4, so an IPv6 client never reaches `AGWFirewallLogs`.
+- Treating compressed IPv6 already stored on a Front Door rule as the same address as the expanded form. The playbook compares strings.

@@ -2,6 +2,11 @@
 *.arm.json
 .last-deployment.json
 .azcli
+function-app/.venv/
+function-app/**/__pycache__/
+function-app/.pytest_cache/
+function-app/*.egg-info/
+function-app/local.settings.json
 
 # Editor
 .vs/

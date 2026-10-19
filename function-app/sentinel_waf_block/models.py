@@ -1,0 +1,130 @@
+"""Typed input, configuration, and the structured execution result."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+APPLICATION_GATEWAY = "ApplicationGateway"
+FRONT_DOOR = "FrontDoor"
+PROVIDERS = frozenset({APPLICATION_GATEWAY, FRONT_DOOR})
+
+STATUS_DRY_RUN = "dry-run"
+STATUS_BLOCKED = "blocked"
+STATUS_ALREADY_BLOCKED = "already-blocked"
+STATUS_NOTHING = "nothing-to-block"
+STATUS_UNENFORCED = "unenforced"
+STATUS_CAPACITY = "capacity-exceeded"
+STATUS_RANGES = "protected-ranges-invalid"
+STATUS_VALIDATION = "validation-failed"
+STATUS_PROVIDER = "unsupported-provider"
+STATUS_GET = "waf-get-failed"
+STATUS_SHAPE = "policy-shape-invalid"
+STATUS_PUT = "waf-put-failed"
+STATUS_COMMENT = "blocked-comment-failed"
+STATUS_INTERNAL = "internal-error"
+
+
+@dataclass(frozen=True)
+class Incident:
+    """Normalized Sentinel incident. Addresses are raw entity strings."""
+
+    arm_id: str
+    number: str
+    title: str
+    ip_entities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Config:
+    """Deployment settings. Booleans are not coerced from strings."""
+
+    waf_policy_resource_id: str
+    waf_provider: str
+    protected_ip_ranges: tuple[str, ...] = ()
+    maximum_block_entries: int = 100
+    auto_block_enabled: object = False
+    override_protected_ranges: object = False
+    block_rule_name: str = "SentinelAutoBlock"
+    block_rule_priority: int = 10
+    arm_api_version: str = "2024-05-01"
+
+
+@dataclass(frozen=True)
+class Rejection:
+    value: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class Result:
+    status: str
+    changed: bool = False
+    candidate_addresses: tuple[str, ...] = ()
+    new_addresses: tuple[str, ...] = ()
+    rejected_addresses: tuple[Rejection, ...] = ()
+    unenforced_addresses: tuple[str, ...] = ()
+    existing_count: int | None = None
+    resulting_count: int | None = None
+    reason: str = ""
+    invalid_protected_ranges: tuple[str, ...] = ()
+    comment: str = ""
+    comment_error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "status": self.status,
+            "changed": self.changed,
+            "candidate_addresses": list(self.candidate_addresses),
+            "new_addresses": list(self.new_addresses),
+            "rejected_addresses": [
+                {"value": item.value, "reason": item.reason} for item in self.rejected_addresses
+            ],
+            "unenforced_addresses": list(self.unenforced_addresses),
+            "existing_count": self.existing_count,
+            "resulting_count": self.resulting_count,
+            "reason": self.reason,
+            "invalid_protected_ranges": list(self.invalid_protected_ranges),
+            "comment": self.comment,
+            "comment_error": self.comment_error,
+        }
+        return body
+
+
+class InputError(ValueError):
+    """The HTTP payload is not a usable incident."""
+
+
+def incident_from_payload(payload: object) -> Incident:
+    """Map the function JSON object to an incident. Raises InputError."""
+
+    if not isinstance(payload, dict):
+        raise InputError("request body must be a JSON object")
+    missing = [
+        key
+        for key in ("incidentArmId", "incidentNumber", "incidentTitle", "ipEntities")
+        if key not in payload
+    ]
+    if missing:
+        raise InputError("missing fields: " + ", ".join(missing))
+    arm_id = payload["incidentArmId"]
+    title = payload["incidentTitle"]
+    number = payload["incidentNumber"]
+    entities = payload["ipEntities"]
+    if not isinstance(arm_id, str) or not arm_id.startswith("/"):
+        raise InputError("incidentArmId must be an ARM resource id")
+    if not isinstance(title, str):
+        raise InputError("incidentTitle must be a string")
+    if isinstance(number, bool) or not isinstance(number, (int, str)):
+        raise InputError("incidentNumber must be a string or integer")
+    if isinstance(number, str) and number.strip() != number:
+        raise InputError("incidentNumber must not contain surrounding whitespace")
+    if not isinstance(entities, list) or any(not isinstance(item, str) for item in entities):
+        raise InputError("ipEntities must be an array of strings")
+    return Incident(
+        arm_id=arm_id,
+        number=str(number),
+        title=title,
+        ip_entities=tuple(entities),
+    )

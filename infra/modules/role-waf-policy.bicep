@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 @description('WAF policy name in the resource group this module is scoped to.')
 param policyName string
 
-@description('Object id of the playbook system-assigned managed identity.')
+@description('Object id of the function system-assigned managed identity.')
 param principalId string
 
 @description('Selects the policy resource type. ApplicationGateway or FrontDoor.')
@@ -30,7 +30,7 @@ resource applicationGatewayPolicyWriter 'Microsoft.Authorization/roleAssignments
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', networkContributorRoleId)
     principalId: principalId
     principalType: 'ServicePrincipal'
-    description: 'Lets the ASE POC playbook update this Application Gateway WAF policy only.'
+    description: 'Lets the ASE POC function update this Application Gateway WAF policy only.'
   }
 }
 
@@ -41,6 +41,6 @@ resource frontDoorPolicyWriter 'Microsoft.Authorization/roleAssignments@2022-04-
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', networkContributorRoleId)
     principalId: principalId
     principalType: 'ServicePrincipal'
-    description: 'Lets the ASE POC playbook update this Front Door WAF policy only.'
+    description: 'Lets the ASE POC function update this Front Door WAF policy only.'
   }
 }

@@ -1,0 +1,201 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "defaultValue": {},
+      "type": "Object"
+    },
+    "functionUrl": {
+      "defaultValue": "",
+      "type": "String"
+    },
+    "functionKey": {
+      "defaultValue": "",
+      "type": "SecureString"
+    }
+  },
+  "triggers": {
+    "Microsoft_Sentinel_incident": {
+      "type": "ApiConnectionWebhook",
+      "inputs": {
+        "body": {
+          "callback_url": "@{listCallbackUrl()}"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "path": "/incident-creation"
+      }
+    }
+  },
+  "actions": {
+    "Entities_-_Get_IPs": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/entities/ip"
+      },
+      "runAfter": {}
+    },
+    "Add_comment_-_entities_failed": {
+      "type": "ApiConnection",
+      "inputs": {
+        "body": {
+          "incidentArmId": "@triggerBody()?['object']?['id']",
+          "message": "<p><strong>ASE POC playbook failed before it called the Python workload.</strong> The WAF policy was not changed. The Sentinel connector did not return IP entities for incident @{coalesce(triggerBody()?['object']?['properties']?['incidentNumber'], '')}.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+        },
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+          }
+        },
+        "method": "post",
+        "path": "/Incidents/Comment"
+      },
+      "runAfter": {
+        "Entities_-_Get_IPs": [
+          "Failed",
+          "TimedOut"
+        ]
+      }
+    },
+    "Terminate_-_entities_failed": {
+      "type": "Terminate",
+      "inputs": {
+        "runStatus": "Succeeded"
+      },
+      "runAfter": {
+        "Add_comment_-_entities_failed": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Select_IP_addresses": {
+      "type": "Select",
+      "inputs": {
+        "from": "@coalesce(body('Entities_-_Get_IPs')?['IPs'], json('[]'))",
+        "select": "@coalesce(item()?['Address'], '')"
+      },
+      "runAfter": {
+        "Entities_-_Get_IPs": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Check_function_url": {
+      "type": "If",
+      "expression": {
+        "equals": [
+          "@parameters('functionUrl')",
+          ""
+        ]
+      },
+      "actions": {
+        "Add_comment_-_function_not_bound": {
+          "type": "ApiConnection",
+          "inputs": {
+            "body": {
+              "incidentArmId": "@triggerBody()?['object']?['id']",
+              "message": "<p><strong>ASE POC playbook did not call the Python workload.</strong> The function URL is empty, so this run stopped. The WAF policy was not changed.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+            },
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/Incidents/Comment"
+          },
+          "runAfter": {}
+        },
+        "Terminate_-_function_not_bound": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Succeeded"
+          },
+          "runAfter": {
+            "Add_comment_-_function_not_bound": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Call_block_function": {
+            "type": "Http",
+            "inputs": {
+              "uri": "@parameters('functionUrl')",
+              "method": "POST",
+              "headers": {
+                "Content-Type": "application/json",
+                "x-functions-key": "@parameters('functionKey')"
+              },
+              "body": {
+                "incidentArmId": "@triggerBody()?['object']?['id']",
+                "incidentNumber": "@triggerBody()?['object']?['properties']?['incidentNumber']",
+                "incidentTitle": "@triggerBody()?['object']?['properties']?['title']",
+                "ipEntities": "@body('Select_IP_addresses')"
+              },
+              "retryPolicy": {
+                "type": "none"
+              }
+            },
+            "limit": {
+              "timeout": "PT2M"
+            },
+            "operationOptions": "DisableAsyncPattern",
+            "runAfter": {}
+          },
+          "Add_comment_-_function_call_failed": {
+            "type": "ApiConnection",
+            "inputs": {
+              "body": {
+                "incidentArmId": "@triggerBody()?['object']?['id']",
+                "message": "<p><strong>ASE POC playbook could not complete the Python workload call.</strong> Do not assume the WAF policy was changed. Read the policy and the Function App logs before retrying.</p><p>Logic App run: @{workflow()['run']['name']}</p>"
+              },
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                }
+              },
+              "method": "post",
+              "path": "/Incidents/Comment"
+            },
+            "runAfter": {
+              "Call_block_function": [
+                "Failed",
+                "TimedOut"
+              ]
+            }
+          },
+          "Terminate_-_function_call_failed": {
+            "type": "Terminate",
+            "inputs": {
+              "runStatus": "Succeeded"
+            },
+            "runAfter": {
+              "Add_comment_-_function_call_failed": [
+                "Succeeded"
+              ]
+            }
+          }
+        }
+      },
+      "runAfter": {
+        "Select_IP_addresses": [
+          "Succeeded"
+        ]
+      }
+    }
+  }
+}

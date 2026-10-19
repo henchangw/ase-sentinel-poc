@@ -1,14 +1,16 @@
 # Security considerations
 
-This POC can change a WAF policy only after two choices: the deploy command sets `autoBlockEnabled` to true, and the script is also given `-ConfirmAutoBlock`. The Logic App parameter defaults to false, so a definition that is created without that parameter still dry-runs.
+This POC changes a WAF policy when `autoBlockEnabled` is true. That is the default in Bicep and in `scripts/deploy.ps1`. Pass `-AutoBlockEnabled $false` to deploy a dry-run. `-ConfirmAutoBlock` is accepted and is not required. The Function App setting is the JSON token `true` or `false`. The strings `True` and `False` are rejected.
 
 ## Identity
 
-The playbook uses a system-assigned managed identity. The Sentinel API connection is `ManagedServiceIdentity` with `parameterValueType` Alternative. There is no user token and no secret in source.
+The playbook and the Function App each use a system-assigned managed identity. The Sentinel API connection is `ManagedServiceIdentity` with `parameterValueType` Alternative. There is no user OAuth token in source.
 
-The identity can comment on Sentinel incidents in the POC resource group (Sentinel Responder) and can write the single WAF policy (Network Contributor). It is not a subscription Owner and it is not a contributor on the resource group.
+The playbook identity can read incident entities and write a comment when the function call does not finish. It does not have Network Contributor. The function identity can comment on incidents in the POC resource group (Sentinel Responder) and can write the single WAF policy (Network Contributor). Neither identity is a subscription Owner or a contributor on the resource group.
 
-Network Contributor is broader than updating one custom rule. A holder of that identity can change other properties of that policy, including managed rules, if the workflow is edited later. The workflow in this repo PUTs `policySettings`, `customRules`, and `managedRules` echoed from the GET, plus the block rule. It does not grant itself more roles.
+Network Contributor is broader than updating one custom rule. A holder of the function identity can change other properties of that policy, including managed rules, if the code is changed later. The function PUTs `policySettings`, `customRules`, and `managedRules` echoed from the GET, plus the block rule. It does not grant itself more roles.
+
+The function key is a Logic App secure parameter. `deploy.ps1` does not print it. The binding deployment stores it. The function runtime uses its system-assigned identity for host storage. Flex package upload still uses the storage account key. That key is not written to the repository.
 
 The Azure Security Insights service principal is granted Microsoft Sentinel Automation Contributor on the POC resource group so an automation rule can start the playbook. That is the role Microsoft requires for `RunPlaybook`. It is not granted on other resource groups by this template.
 
@@ -21,20 +23,21 @@ The analytics rule and the playbook both refuse, unless `overrideProtectedRanges
 - Loopback `127.0.0.0/8`
 - Link-local `169.254.0.0/16`, which includes the instance metadata address `169.254.169.254`
 - `100.64.0.0/10`
+- IPv6 unspecified `::/128`, loopback `::1/128`, link-local `fe80::/10`, and unique local `fc00::/7`
 
-The rule also applies watchlist `AseWafIpAllowlist`. The playbook applies `protectedIpRanges` passed into the workflow. Built-in ranges are hard-coded in the KQL, not only stored in the watchlist, so a watchlist edit cannot remove them.
+The rule also applies watchlist `AseWafIpAllowlist`. The function applies `protectedIpRanges` from its app settings and does not read that watchlist. Built-in ranges are hard-coded in the KQL and in the function, so a watchlist edit cannot remove them.
 
-`overrideProtectedRanges` skips those filters in both places. The deploy script will not set it without `-ConfirmOverrideProtectedRanges`. Empty and non-IPv4 values are still rejected. IPv6 is rejected.
+`overrideProtectedRanges` skips those filters in both places. The deploy script will not set it without `-ConfirmOverrideProtectedRanges`. Empty values, non-canonical addresses, and IPv4-mapped IPv6 are still rejected. Application Gateway still does not write IPv6 into `IPMatch`.
 
-Customer ranges the playbook cannot parse fail the run before any block decision, including the dry-run sentence. The deploy script rejects those ranges first. The playbook check remains so a later parameter edit cannot silently ignore a prefix such as `/12`.
+Customer ranges the function cannot parse fail the run before any block decision, including the dry-run sentence. The deploy script rejects those ranges first. The function check remains so a later app-setting edit cannot silently ignore a prefix such as `/12`.
 
 ## Dry-run and opt-in
 
-The PUT actions exist only on the branch where `autoBlockEnabled` is the boolean `true`. The string `"true"` does not take that branch. Dry-run still GETs the policy so it can avoid saying "Would block" for an address that is already listed. GET does not modify the policy.
+The function sends a PUT only when `autoBlockEnabled` is the JSON boolean `true`. The string `"true"` stays a dry-run. Dry-run still GETs the policy so it can avoid saying "Would block" for an address that is already listed. GET does not modify the policy. An incident that contains only IPv6 on Application Gateway does not GET, because that provider cannot block an IPv6 source.
 
 Duplicates are removed with `union` before a write. A second incident for an address already on the rule does not PUT. If the merged list would exceed `maximumBlockEntries`, nothing is written.
 
-The automation rule does not contain an approval action. Leaving `autoBlockEnabled` false is the approval gate. Turning it on means the next matching incident is written without an analyst click. That is a product decision ASE still has to make. The README question list leaves it open.
+The automation rule does not contain an approval action. With the default `autoBlockEnabled` of true, the next matching incident is written without an analyst click. Pass `-AutoBlockEnabled $false` to stop those writes. That product choice is still open for ASE. The README question list leaves it open.
 
 ## Evidence
 

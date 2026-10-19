@@ -4,38 +4,12 @@ param location string
 @description('Logic App workflow name. Sentinel shows this name as the playbook.')
 param playbookName string
 
-@description('Full resource id of the WAF policy the playbook may update.')
-param wafPolicyResourceId string
+@description('HTTPS URL of POST /api/SentinelWafAutoBlock. Empty keeps the playbook from calling the function.')
+param functionUrl string
 
-@description('ApplicationGateway or FrontDoor. This selects the custom-rule shape and the ARM API version.')
-@allowed([
-  'ApplicationGateway'
-  'FrontDoor'
-])
-param wafProvider string
-
-@description('Customer IPv4 addresses or /8, /16, /24, and /32 prefixes the playbook must not block.')
-param protectedIpRanges array
-
-@description('Maximum addresses stored on the block custom rule.')
-@minValue(1)
-@maxValue(500)
-param maximumBlockEntries int
-
-@description('When false, the playbook comments Would block IP and does not PUT the policy. This is the safe default.')
-param autoBlockEnabled bool
-
-@description('When true, built-in and customer protected ranges are not applied. Invalid IPs are still rejected.')
-param overrideProtectedRanges bool
-
-param blockRuleName string
-
-@minValue(1)
-@maxValue(100)
-param blockRulePriority int
-
-@description('ARM api-version used to read and write the selected policy type.')
-param armApiVersion string
+@description('Function key for AuthLevel.FUNCTION. Empty fails the HTTP call. The playbook does not log this value.')
+@secure()
+param functionKey string
 
 @description('Workspace resource id for playbook runtime logs.')
 param logAnalyticsWorkspaceId string
@@ -44,10 +18,6 @@ param tags object
 
 var connectionName = 'azuresentinel-${playbookName}'
 var sentinelResponderRoleId = '3e150937-b8fe-4cfb-8069-0eaf05ecd056'
-var policyIdParts = split(wafPolicyResourceId, '/')
-var policySubscriptionId = policyIdParts[2]
-var policyResourceGroup = policyIdParts[4]
-var policyName = last(policyIdParts)
 
 resource sentinelConnection 'Microsoft.Web/connections@2016-06-01' = {
   name: connectionName
@@ -75,7 +45,7 @@ resource playbook 'Microsoft.Logic/workflows@2019-05-01' = {
   }
   properties: {
     state: 'Enabled'
-    definition: loadJsonContent('../../playbooks/block-malicious-ip/workflow.json')
+    definition: loadJsonContent('../../playbooks/block-malicious-ip/thin-workflow.json')
     parameters: {
       '$connections': {
         value: {
@@ -91,32 +61,11 @@ resource playbook 'Microsoft.Logic/workflows@2019-05-01' = {
           }
         }
       }
-      wafPolicyResourceId: {
-        value: wafPolicyResourceId
+      functionUrl: {
+        value: functionUrl
       }
-      wafProvider: {
-        value: wafProvider
-      }
-      protectedIpRanges: {
-        value: protectedIpRanges
-      }
-      maximumBlockEntries: {
-        value: maximumBlockEntries
-      }
-      autoBlockEnabled: {
-        value: autoBlockEnabled
-      }
-      overrideProtectedRanges: {
-        value: overrideProtectedRanges
-      }
-      blockRuleName: {
-        value: blockRuleName
-      }
-      blockRulePriority: {
-        value: blockRulePriority
-      }
-      armApiVersion: {
-        value: armApiVersion
+      functionKey: {
+        value: functionKey
       }
     }
   }
@@ -148,17 +97,7 @@ resource sentinelResponder 'Microsoft.Authorization/roleAssignments@2022-04-01' 
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', sentinelResponderRoleId)
     principalId: playbook.identity.principalId
     principalType: 'ServicePrincipal'
-    description: 'Lets the playbook comment on Sentinel incidents in this resource group.'
-  }
-}
-
-module policyRole 'role-waf-policy.bicep' = {
-  name: 'waf-policy-role'
-  scope: resourceGroup(policySubscriptionId, policyResourceGroup)
-  params: {
-    policyName: policyName
-    principalId: playbook.identity.principalId
-    wafProvider: wafProvider
+    description: 'Lets the playbook read incident IP entities and comment when the function call does not finish.'
   }
 }
 

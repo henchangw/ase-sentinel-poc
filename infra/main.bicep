@@ -41,13 +41,13 @@ param frontDoorLogDestination string = 'AzureDiagnostics'
 ])
 param wafMode string = 'Prevention'
 
-@description('Safe default. False records Would block IP on the incident and does not change the WAF policy. True PUTs the block rule. The deploy script requires a second confirmation switch.')
-param autoBlockEnabled bool = false
+@description('Default true. The function PUTs the block rule when AUTO_BLOCK_ENABLED is the JSON boolean true. False records Would block IP and does not change the WAF policy. Pass false to deploy.ps1 to keep dry-run.')
+param autoBlockEnabled bool = true
 
 @description('Skips built-in and customer protected-range filters in the KQL and the playbook. Invalid addresses are still rejected. Default false.')
 param overrideProtectedRanges bool = false
 
-@description('Extra IPv4 addresses or /8, /16, /24, and /32 prefixes that must not be blocked. Built-in private, loopback, link-local, metadata, and CGNAT ranges are always protected unless overrideProtectedRanges is true.')
+@description('Extra addresses that must not be blocked. IPv4: a single canonical address or /8, /16, /24, /32. IPv6: an address or /16, /32, /48, /64, /80, /96, /112, /128, stored in expanded form. Built-in private, loopback, link-local, metadata, CGNAT, and IPv6 unspecified, loopback, link-local, and unique-local ranges stay protected unless overrideProtectedRanges is true.')
 param protectedIpRanges array = []
 
 @description('Distinct simulated-probe events from one public IP before an incident is opened.')
@@ -139,6 +139,10 @@ var builtInProtectedRanges = [
   '172.16.0.0/12'
   '192.168.0.0/16'
   '100.64.0.0/10'
+  '0000:0000:0000:0000:0000:0000:0000:0000/128'
+  '0000:0000:0000:0000:0000:0000:0000:0001/128'
+  'fe80:0000:0000:0000:0000:0000:0000:0000/10'
+  'fc00:0000:0000:0000:0000:0000:0000:0000/7'
 ]
 var watchlistRanges = concat(builtInProtectedRanges, protectedIpRanges)
 var watchlistLines = [for range in watchlistRanges: '${range},POC protected range']
@@ -177,14 +181,14 @@ module waf 'modules/waf.bicep' = {
   }
 }
 
-module playbook 'modules/playbook.bicep' = {
-  name: 'playbook'
+module blockFunction 'modules/function.bicep' = {
+  name: 'function'
   dependsOn: [
     waf
   ]
   params: {
     location: location
-    playbookName: 'playbook-${namePrefix}-block-malicious-ip'
+    namePrefix: namePrefix
     wafPolicyResourceId: wafPolicyResourceId
     wafProvider: wafProvider
     protectedIpRanges: protectedIpRanges
@@ -194,6 +198,18 @@ module playbook 'modules/playbook.bicep' = {
     blockRuleName: blockRuleName
     blockRulePriority: blockRulePriority
     armApiVersion: armApiVersion
+    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
+    tags: tags
+  }
+}
+
+module playbook 'modules/playbook.bicep' = {
+  name: 'playbook'
+  params: {
+    location: location
+    playbookName: 'playbook-${namePrefix}-block-malicious-ip'
+    functionUrl: blockFunction.outputs.functionUrl
+    functionKey: ''
     logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceResourceId
     tags: tags
   }
@@ -236,6 +252,11 @@ output publicIpAddress string = waf.outputs.publicIpAddress
 output playbookName string = playbook.outputs.playbookName
 output playbookResourceId string = playbook.outputs.playbookResourceId
 output playbookPrincipalId string = playbook.outputs.principalId
+output functionAppName string = blockFunction.outputs.functionAppName
+output functionPrincipalId string = blockFunction.outputs.functionPrincipalId
+output functionUrl string = blockFunction.outputs.functionUrl
+output appInsightsName string = blockFunction.outputs.appInsightsName
+output appInsightsResourceId string = blockFunction.outputs.appInsightsResourceId
 output analyticsRuleId string = sentinel.outputs.analyticsRuleId
 output watchlistAlias string = sentinel.outputs.watchlistAlias
 output detectionQueryKind string = sentinel.outputs.detectionQueryKind

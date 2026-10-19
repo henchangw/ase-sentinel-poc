@@ -1,6 +1,6 @@
 # Deployment
 
-Use `scripts/deploy.ps1`. It creates the resource group, deploys `infra/main.bicep`, assigns the Sentinel automation role, and then deploys the automation rule. `infra/parameters/main.bicepparam` is the safe default set for review. A deployment that uses only that file does not create the automation rule, so Sentinel will not call the playbook.
+Use `scripts/deploy.ps1`. It creates the resource group, deploys `infra/main.bicep`, publishes the Python Function App, binds the playbook to that function, removes Network Contributor from the playbook identity, assigns the Sentinel automation role, and then deploys the automation rule. `infra/parameters/main.bicepparam` is the safe default set for review. A deployment that uses only that file does not publish the function and does not create the automation rule, so Sentinel will not call a working playbook.
 
 ## Default test rig
 
@@ -16,7 +16,7 @@ What-if, main template only:
 
 The script prints a warning that WAF_v2 bills hourly. Application Gateway deployments often take 20 to 40 minutes.
 
-Outputs include the workspace name, workspace resource id, policy id, playbook name, `autoBlockEnabled`, the detection query kind, the analytics rule id, and the public IP when the test rig was created.
+Outputs include the workspace name, workspace resource id, policy id, playbook name, function app name, Application Insights name, `autoBlockEnabled`, the detection query kind, the analytics rule id, and the public IP when the test rig was created. The Application Insights connection string is not printed.
 
 ## Parameters the script enforces
 
@@ -26,9 +26,9 @@ Outputs include the workspace name, workspace resource id, policy id, playbook n
 - `FrontDoor` requires `-DeployTestWaf $false` and either `-ExistingWafPolicyName` or `-ExistingWafPolicyResourceId`
 - The test rig rejects an existing policy name or id at the same time, so a deploy cannot silently ignore one
 - An existing resource id must be the ARM type for the selected provider
-- `-AutoBlockEnabled $true` requires `-ConfirmAutoBlock`
+- `-AutoBlockEnabled` defaults to `$true`. `$false` deploys a dry-run. `-ConfirmAutoBlock` is accepted and is not required
 - `-OverrideProtectedRanges $true` requires `-ConfirmOverrideProtectedRanges`
-- Each `ProtectedIpRanges` entry matches an IPv4 address or `/8`, `/16`, `/24`, `/32`
+- Each `ProtectedIpRanges` entry is an IPv4 address or `/8`, `/16`, `/24`, `/32`, or an IPv6 address or `/16`, `/32`, `/48`, `/64`, `/80`, `/96`, `/112`, `/128`. The script expands IPv6 to eight lowercase hex groups before deployment.
 - `NamePrefix` is 3 to 24 characters of lowercase letters, digits, and hyphens
 - `ProbeMarker` is 3 to 40 letters, digits, and hyphens, so it cannot break the KQL string it is substituted into
 
@@ -36,7 +36,7 @@ Customer ranges are passed as a JSON array string. A one-element array stays an 
 
 ## Existing Application Gateway policy
 
-Only do this with a disposable policy. The playbook receives Network Contributor on that policy. Opt-in mode PUTs the policy.
+Only do this with a disposable policy. The function identity receives Network Contributor on that policy. Opt-in mode PUTs the policy.
 
 ```powershell
 ./scripts/deploy.ps1 `
@@ -70,7 +70,7 @@ What this does not do:
 
 `AzureDiagnostics` is the query Microsoft documents (`Category == "FrontDoorWebApplicationFirewallLog"`, with `column_ifexists` for `clientIP_s`, `action_s`, `ruleName_s`, `requestUri_s`, and `host_s`). Use `-FrontDoorLogDestination ResourceSpecific` only after ASE confirms `AzureFrontDoorWebApplicationFirewallLog` in the chosen workspace. The script warns when that option is selected.
 
-The playbook still dry-runs unless you also pass `-AutoBlockEnabled $true -ConfirmAutoBlock`.
+Blocking stays on unless you also pass `-AutoBlockEnabled $false`.
 
 ## Automation rule phase
 
@@ -93,7 +93,11 @@ If the principal cannot be found, the script leaves the analytics rule and the p
 
 If the second deployment fails on replication, wait and run `-AutomationRuleOnly` again. The rule name is stable, so the retry updates the same rule.
 
-## Turning blocking on later
+## Application Insights
+
+The function module creates a workspace-based Application Insights component on the Sentinel Log Analytics workspace and assigns Monitoring Metrics Publisher to the function identity. The function app settings are `APPLICATIONINSIGHTS_CONNECTION_STRING` and `APPLICATIONINSIGHTS_AUTHENTICATION_STRING=Authorization=AAD`. The script does not print the connection string. Invocation and trace rows show up in that workspace after the function handles a request. Sampling is off in `function-app/host.json`.
+
+## Returning to dry-run
 
 Redeploy with the same resource group and name prefix:
 
@@ -101,11 +105,12 @@ Redeploy with the same resource group and name prefix:
 ./scripts/deploy.ps1 `
   -ResourceGroupName rg-ase-sentinel-poc `
   -NamePrefix ase-sentinel-poc `
-  -AutoBlockEnabled $true `
-  -ConfirmAutoBlock
+  -AutoBlockEnabled $false
 ```
 
-Bicep updates the Logic App parameter. Previous incidents are not replayed. Resubmitting the Logic App run after this change uses the new parameter and will PUT. Read [security-considerations.md](security-considerations.md) before you do that against any policy you need to keep.
+Bicep writes `AUTO_BLOCK_ENABLED` as the JSON token `false`. Previous incidents are not replayed. The default deploy writes the token `true`.
+
+The function publish packs `function-app/function_app.py`, `host.json`, `sentinel_waf_block`, and Linux wheels. It does not use remote build. The script then reads the host function key, writes it only into a temporary parameters file, and deploys `infra/modules/playbook.bicep` again so the Logic App secure parameter is set. The script does not print the key. A full deploy clears that parameter during the main template and sets it again in the binding step. Until the binding step finishes, the playbook comments that the function URL is empty, or that the call did not finish, and it does not decide a block. After publish, the script reads the app settings back. If `AUTO_BLOCK_ENABLED` or `OVERRIDE_PROTECTED_RANGES` is not the lowercase JSON token, it rewrites the whole setting dictionary and restarts the app. That rewrite keeps every other setting, including the Application Insights connection string.
 
 ## Destroy
 

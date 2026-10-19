@@ -11,7 +11,7 @@ Items below are recommendations for a later design. They are not implemented in 
 
 ## Replace dry-run with an approval, not with an always-on PUT
 
-This POC uses `autoBlockEnabled` as the only gate. A production automation rule should require an analyst action, or a separate approved playbook, before `autoBlockEnabled` is true. Record who approved the change on the incident. The current automation rule labels the incident and starts the playbook immediately.
+This POC uses `autoBlockEnabled` as the only gate. A production automation rule should require an analyst action, or a separate approved playbook, before `autoBlockEnabled` is true. Record who approved the change on the incident. The current automation rule labels the incident and starts the playbook immediately. The playbook forwards the incident to the Function App.
 
 ## Narrow the write permission
 
@@ -29,7 +29,7 @@ Network Contributor on the policy is a POC shortcut. Replace it with a custom ro
 
 Pass ASE's management and egress ranges in `protectedIpRanges`. Keep the built-in private, loopback, link-local, metadata, and CGNAT checks. Do not enable `overrideProtectedRanges` to "make the test work" from an office network. Add the office egress prefix to the protected list, or run the probe from a public test host that is allowed to be listed.
 
-The playbook can evaluate `/8`, `/16`, `/24`, and `/32` plus a single address. A production matcher has to honor the prefixes ASE actually uses, including `/12` if they put it in the customer list rather than relying on the built-in RFC1918 check.
+The function can evaluate IPv4 `/8`, `/16`, `/24`, and `/32`, and IPv6 `/16`, `/32`, `/48`, `/64`, `/80`, `/96`, `/112`, and `/128`, plus a single address in the canonical form. A production matcher has to honor the prefixes ASE actually uses, including `/12` if they put it in the customer list rather than relying on the built-in RFC1918 check. Application Gateway `IPMatch` still does not enforce IPv6; a production block of IPv6 clients needs a product that does, such as Front Door.
 
 ## Hardening the test shortcuts that must not ship
 
@@ -52,4 +52,4 @@ Keep the statement that a rule matches a configured pattern. Do not describe the
 
 ## Change control
 
-Treat a flip of `autoBlockEnabled` as a change. Redeploy through the script so the confirmation switch is required. Review the Logic App run and the policy diff after the first opted-in incident, then decide whether the gate stays on.
+Treat a flip of `autoBlockEnabled` as a change. Redeploy through the script. The default is true. Pass `-AutoBlockEnabled $false` to return to dry-run. Review the Logic App run and the policy diff after a blocking incident.
