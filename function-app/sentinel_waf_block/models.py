@@ -14,7 +14,6 @@ STATUS_DRY_RUN = "dry-run"
 STATUS_BLOCKED = "blocked"
 STATUS_ALREADY_BLOCKED = "already-blocked"
 STATUS_NOTHING = "nothing-to-block"
-STATUS_UNENFORCED = "unenforced"
 STATUS_CAPACITY = "capacity-exceeded"
 STATUS_RANGES = "protected-ranges-invalid"
 STATUS_VALIDATION = "validation-failed"
@@ -64,7 +63,6 @@ class Result:
     candidate_addresses: tuple[str, ...] = ()
     new_addresses: tuple[str, ...] = ()
     rejected_addresses: tuple[Rejection, ...] = ()
-    unenforced_addresses: tuple[str, ...] = ()
     existing_count: int | None = None
     resulting_count: int | None = None
     reason: str = ""
@@ -81,7 +79,6 @@ class Result:
             "rejected_addresses": [
                 {"value": item.value, "reason": item.reason} for item in self.rejected_addresses
             ],
-            "unenforced_addresses": list(self.unenforced_addresses),
             "existing_count": self.existing_count,
             "resulting_count": self.resulting_count,
             "reason": self.reason,

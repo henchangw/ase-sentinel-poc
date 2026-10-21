@@ -17,7 +17,6 @@ from sentinel_waf_block.decision import (
     exceeds_capacity,
     merge_addresses,
     override_enabled,
-    split_provider,
 )
 from sentinel_waf_block.models import (
     PROVIDERS,
@@ -32,7 +31,6 @@ from sentinel_waf_block.models import (
     STATUS_PUT,
     STATUS_RANGES,
     STATUS_SHAPE,
-    STATUS_UNENFORCED,
     STATUS_VALIDATION,
     Config,
     Incident,
@@ -86,7 +84,7 @@ class Engine:
         result = replace(result, comment=render(result, incident, config))
         result = self._deliver_comment(incident, result)
         log.info(
-            "status=%s changed=%s incident=%s existing=%s resulting=%s new=%s rejected=%s unenforced=%s",
+            "status=%s changed=%s incident=%s existing=%s resulting=%s new=%s rejected=%s",
             result.status,
             result.changed,
             incident.number,
@@ -94,7 +92,6 @@ class Engine:
             result.resulting_count,
             len(result.new_addresses),
             len(result.rejected_addresses),
-            len(result.unenforced_addresses),
         )
         return result
 
@@ -118,17 +115,16 @@ class Engine:
                 invalid_protected_ranges=invalid_ranges,
             )
         rejected: list[Rejection] = []
-        accepted: list[tuple[str, int]] = []
+        enforceable: list[str] = []
         seen: set[str] = set()
         override = override_enabled(config.override_protected_ranges)
         for raw in incident.ip_entities:
             classified = canonical_host(raw)
-            if classified.reason is not None or classified.canonical is None or classified.version is None:
+            if classified.reason is not None or classified.canonical is None:
                 rejected.append(Rejection(raw, classified.reason or "invalid"))
                 continue
             reason = protection_reason(
                 classified.canonical,
-                classified.version,
                 _networks,
                 override=override,
             )
@@ -138,18 +134,8 @@ class Engine:
             if classified.canonical in seen:
                 continue
             seen.add(classified.canonical)
-            accepted.append((classified.canonical, classified.version))
-        enforceable, unenforced = split_provider(accepted, config.waf_provider)
+            enforceable.append(classified.canonical)
         rejections = tuple(rejected)
-        unenforced_values = tuple(unenforced)
-        if not enforceable and unenforced:
-            return _result(
-                STATUS_UNENFORCED,
-                candidate_addresses=tuple(enforceable),
-                rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
-                reason="Azure Application Gateway does not support IPv6 as an IP block source",
-            )
         if not enforceable:
             return _result(
                 STATUS_NOTHING,
@@ -161,7 +147,6 @@ class Engine:
                 STATUS_GET,
                 candidate_addresses=tuple(enforceable),
                 rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
                 reason="wafPolicyResourceId is missing",
             )
         try:
@@ -171,7 +156,6 @@ class Engine:
                 STATUS_GET,
                 candidate_addresses=tuple(enforceable),
                 rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
                 reason="authentication failed",
             )
         except WafGetError as exc:
@@ -179,7 +163,6 @@ class Engine:
                 STATUS_GET,
                 candidate_addresses=tuple(enforceable),
                 rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
                 reason=_safe_text(exc),
             )
         try:
@@ -189,7 +172,6 @@ class Engine:
                 STATUS_SHAPE,
                 candidate_addresses=tuple(enforceable),
                 rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
                 reason=_safe_text(exc),
             )
         merged, new = merge_addresses(list(view.existing_values), enforceable)
@@ -200,7 +182,6 @@ class Engine:
                 STATUS_ALREADY_BLOCKED,
                 candidate_addresses=tuple(enforceable),
                 rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
                 existing_count=existing_count,
                 resulting_count=resulting_count,
                 reason="address is already listed",
@@ -211,7 +192,6 @@ class Engine:
                 candidate_addresses=tuple(enforceable),
                 new_addresses=tuple(new),
                 rejected_addresses=rejections,
-                unenforced_addresses=unenforced_values,
                 existing_count=existing_count,
                 resulting_count=resulting_count,
                 reason=(
@@ -225,7 +205,6 @@ class Engine:
             candidate_addresses=tuple(enforceable),
             new_addresses=tuple(new),
             rejected_addresses=rejections,
-            unenforced_addresses=unenforced_values,
             existing_count=existing_count,
             resulting_count=resulting_count,
         )
