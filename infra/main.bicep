@@ -47,7 +47,7 @@ param autoBlockEnabled bool = true
 @description('Skips built-in and customer protected-range filters in the KQL and the playbook. Invalid addresses are still rejected. Default false.')
 param overrideProtectedRanges bool = false
 
-@description('Extra addresses that must not be blocked. IPv4: a single canonical address or /8, /16, /24, /32. IPv6: an address or /16, /32, /48, /64, /80, /96, /112, /128, stored in expanded form. Built-in private, loopback, link-local, metadata, CGNAT, and IPv6 unspecified, loopback, link-local, and unique-local ranges stay protected unless overrideProtectedRanges is true.')
+@description('Extra IPv4 addresses that must not be blocked. A single canonical address or /8, /16, /24, /32. Built-in private, loopback, link-local, metadata, and CGNAT ranges stay protected unless overrideProtectedRanges is true.')
 param protectedIpRanges array = []
 
 @description('Distinct simulated-probe events from one public IP before an incident is opened.')
@@ -139,10 +139,6 @@ var builtInProtectedRanges = [
   '172.16.0.0/12'
   '192.168.0.0/16'
   '100.64.0.0/10'
-  '0000:0000:0000:0000:0000:0000:0000:0000/128'
-  '0000:0000:0000:0000:0000:0000:0000:0001/128'
-  'fe80:0000:0000:0000:0000:0000:0000:0000/10'
-  'fc00:0000:0000:0000:0000:0000:0000:0000/7'
 ]
 var watchlistRanges = concat(builtInProtectedRanges, protectedIpRanges)
 var watchlistLines = [for range in watchlistRanges: '${range},POC protected range']
